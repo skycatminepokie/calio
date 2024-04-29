@@ -473,7 +473,7 @@ public class SerializableDataType<T> {
                     T t = argumentType.parse(new StringReader(str));
                     return new ArgumentWrapper<>(t, str);
                 } catch (CommandSyntaxException e) {
-                    throw new RuntimeException("Wrong syntax in argument type data", e);
+                    throw new RuntimeException(e.getMessage());
                 }
             });
     }
