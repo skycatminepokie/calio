@@ -31,15 +31,13 @@ import net.minecraft.fluid.Fluid;
 import net.minecraft.item.FoodComponent;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtOps;
-import net.minecraft.nbt.StringNbtReader;
+import net.minecraft.nbt.*;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.particle.ParticleEffect;
 import net.minecraft.particle.ParticleType;
 import net.minecraft.recipe.Ingredient;
+import net.minecraft.recipe.Recipe;
 import net.minecraft.recipe.RecipeEntry;
-import net.minecraft.recipe.RecipeSerializer;
 import net.minecraft.registry.*;
 import net.minecraft.sound.SoundEvent;
 import net.minecraft.stat.Stat;
@@ -531,39 +529,50 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<Text>> TEXTS = SerializableDataType.list(TEXT);
 
-    public static final SerializableDataType<RecipeEntry> RECIPE = new SerializableDataType<>(RecipeEntry.class,
-        (buffer, recipe) -> {
-            buffer.writeIdentifier(Registries.RECIPE_SERIALIZER.getId(recipe.value().getSerializer()));
-            buffer.writeIdentifier(recipe.id());
-            recipe.value().getSerializer().write(buffer, recipe.value());
+    public static final SerializableDataType<RecipeEntry<? extends Recipe<?>>> RECIPE = new SerializableDataType<>(
+        ClassUtil.castClass(RecipeEntry.class),
+        (buf, recipeEntry) -> {
+
+            NbtElement recipeNbt = Util.getResult(Recipe.CODEC.encodeStart(NbtOps.INSTANCE, recipeEntry.value()), NbtException::new);
+
+            buf.writeIdentifier(recipeEntry.id());
+            buf.writeNbt(recipeNbt);
+
         },
-        (buffer) -> {
-            Identifier recipeSerializerId = buffer.readIdentifier();
-            Identifier recipeId = buffer.readIdentifier();
-            RecipeSerializer<?> serializer = Registries.RECIPE_SERIALIZER.get(recipeSerializerId);
-            return new RecipeEntry<>(recipeId, serializer.read(buffer));
+        buf -> {
+
+            Identifier id = buf.readIdentifier();
+            Recipe<?> recipe = Util.getResult(Recipe.CODEC.parse(NbtOps.INSTANCE, buf.readNbt(NbtSizeTracker.ofUnlimitedBytes())), NbtException::new);
+
+            return new RecipeEntry<>(id, recipe);
+
         },
-        (jsonElement) -> {
-            if(!jsonElement.isJsonObject()) {
-                throw new RuntimeException("Expected recipe to be a JSON object.");
+        jsonElement -> {
+
+            if (!(jsonElement instanceof JsonObject jsonObject)) {
+                throw new JsonSyntaxException("Expected recipe to be a JSON object.");
             }
-            JsonObject json = jsonElement.getAsJsonObject();
-            Identifier recipeSerializerId = Identifier.tryParse(JsonHelper.getString(json, "type"));
-            Identifier recipeId = Identifier.tryParse(JsonHelper.getString(json, "id"));
-            RecipeSerializer<?> serializer = Registries.RECIPE_SERIALIZER.get(recipeSerializerId);
-            return new RecipeEntry<>(recipeId, serializer.codec().parse(JsonOps.INSTANCE, json).resultOrPartial(Calio.LOGGER::error).orElseThrow(() -> new RuntimeException("Failed to read recipe json.")));
+
+            Identifier id = IDENTIFIER.read(JsonHelper.getElement(jsonObject, "id"));
+            Recipe<?> recipe = Util.getResult(Recipe.CODEC.parse(JsonOps.INSTANCE, jsonObject), JsonParseException::new);
+
+            return new RecipeEntry<>(id, recipe);
+
         },
-        recipe -> {
-            JsonObject json = new JsonObject();
-            json.addProperty("type", Registries.RECIPE_SERIALIZER.getId(recipe.value().getSerializer()).toString());
-            json.addProperty("id", recipe.id().toString());
-            recipe.value().getSerializer().codec().encodeStart(JsonOps.INSTANCE, recipe.value()).resultOrPartial(Calio.LOGGER::error).ifPresent(o -> {
-                for (Map.Entry<String, JsonElement> j : ((JsonObject) o).entrySet()) {
-                    json.add(j.getKey(), j.getValue());
-                }
-            });
-            return json;
-        });
+        recipeEntry -> {
+
+            JsonObject recipeJson = Recipe.CODEC.encodeStart(JsonOps.INSTANCE, recipeEntry.value())
+                .mapError(err -> "Failed to serialize recipe to JSON (skipping): " + err)
+                .resultOrPartial(Calio.LOGGER::warn)
+                .filter(JsonElement::isJsonObject)
+                .map(JsonElement::getAsJsonObject)
+                .orElseGet(JsonObject::new);
+
+            recipeJson.addProperty("id", recipeEntry.id().toString());
+            return recipeJson;
+            
+        }
+    );
 
     public static final SerializableDataType<GameEvent> GAME_EVENT = SerializableDataType.registry(GameEvent.class, Registries.GAME_EVENT);
 
