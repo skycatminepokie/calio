@@ -2,12 +2,14 @@ package io.github.apace100.calio.data;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import io.github.apace100.calio.util.CalioResourceConditions;
+import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.resource.SinglePreparationResourceReloader;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.Util;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
 import org.quiltmc.parsers.json.JsonFormat;
@@ -16,26 +18,21 @@ import org.quiltmc.parsers.json.gson.GsonReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.BufferedReader;
+import java.io.Reader;
 import java.util.*;
 
 /**
- *  Similar to {@link MultiJsonDataLoader}, except it provides a list of {@link MultiJsonDataContainer} that contains a map
- *  of {@link Identifier} and a {@link List} of {@link JsonElement JsonElements} with a {@link String} that identifies the
- *  data/resource pack the JSON data is from.
+ *  Similar to {@link MultiJsonDataLoader}, except it provides a {@link MultiJsonDataContainer}, which contains a map of {@link Identifier} and a
+ *  {@link List} of {@link JsonElement JsonElements} associated with a {@link String} that identifies the data/resource pack the JSON data is from.
  */
-public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationResourceReloader<MultiJsonDataContainer> {
+public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationResourceReloader<MultiJsonDataContainer> implements IExtendedJsonDataLoader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IdentifiableMultiJsonDataLoader.class);
-    private static final Map<String, JsonFormat> VALID_EXTENSIONS = Util.make(new HashMap<>(), map -> {
-        map.put(".json", JsonFormat.JSON);
-        map.put(".json5", JsonFormat.JSON5);
-        map.put(".jsonc", JsonFormat.JSONC);
-    });
 
-    private final ResourceType resourceType;
-    private final String directoryName;
     private final Gson gson;
+
+    protected final ResourceType resourceType;
+    protected final String directoryName;
 
     public IdentifiableMultiJsonDataLoader(Gson gson, String directoryName, ResourceType resourceType) {
         this.gson = gson;
@@ -47,35 +44,42 @@ public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationR
     protected MultiJsonDataContainer prepare(ResourceManager manager, Profiler profiler) {
 
         MultiJsonDataContainer result = new MultiJsonDataContainer();
-        manager.findResources(directoryName, this::hasValidExtension).keySet().forEach(fileId -> {
+        manager.findAllResources(directoryName, this::hasValidFormat).forEach((fileId, resources) -> {
 
-            Identifier id = this.trim(fileId);
+            Identifier resourceId = this.trim(fileId, directoryName);
             String fileExtension = "." + FilenameUtils.getExtension(fileId.getPath());
 
-            JsonFormat jsonFormat = VALID_EXTENSIONS.get(fileExtension);
-            manager.getAllResources(fileId).forEach(resource -> {
+            JsonFormat jsonFormat = this.getValidFormats().get(fileExtension);
+            for (Resource resource : resources) {
 
                 String packName = resource.getResourcePackName();
-                try (BufferedReader resourceReader = resource.getReader()) {
+                try (Reader resourceReader = resource.getReader()) {
 
                     GsonReader gsonReader = new GsonReader(JsonReader.create(resourceReader, jsonFormat));
                     JsonElement jsonElement = gson.fromJson(gsonReader, JsonElement.class);
 
                     if (jsonElement == null) {
-                        throw new JsonParseException("JSON cannot be null! Caused by either the file being empty or a syntax error when being parsed by " + gsonReader);
+                        throw new JsonParseException("JSON cannot be empty!");
                     }
 
-                    result
-                        .computeIfAbsent(id, k -> new LinkedHashMap<>())
-                        .computeIfAbsent(packName, k -> new LinkedList<>())
-                        .add(jsonElement);
+                    else if (jsonElement instanceof JsonObject jsonObject && !CalioResourceConditions.objectMatchesConditions(resourceId, jsonObject)) {
+                        this.onReject(packName, fileId, resourceId);
+                    }
 
-                } catch (Exception e) {
-                    String filePath = packName + "/" + resourceType.getDirectory() + "/" + fileId.getNamespace() + "/" + fileId.getPath();
-                    LOGGER.error("Couldn't parse data file \"{}\" from \"{}\": {}", id, filePath, e.getMessage());
+                    else {
+                        result
+                            .computeIfAbsent(resourceId, k -> new LinkedHashMap<>())
+                            .computeIfAbsent(packName, k -> new LinkedList<>())
+                            .add(jsonElement);
+                    }
+
                 }
 
-            });
+                catch (Exception e) {
+                    this.onError(packName, fileId, resourceId, e);
+                }
+
+            }
 
         });
 
@@ -83,15 +87,9 @@ public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationR
 
     }
 
-    protected Identifier trim(Identifier fileId) {
-        String path = FilenameUtils.removeExtension(fileId.getPath()).substring(directoryName.length() + 1);
-        return new Identifier(fileId.getNamespace(), path);
+    @Override
+    public void onError(String packName, Identifier fileId, Identifier resourceId, Exception exception) {
+        String filePath = packName + "/" + resourceType.getDirectory() + "/" + fileId.getNamespace() + "/" + fileId.getPath();
+        LOGGER.error("Couldn't parse data file \"{}\" from \"{}\"", resourceId, filePath, exception);
     }
-
-    protected boolean hasValidExtension(Identifier fileId) {
-        return VALID_EXTENSIONS.keySet()
-            .stream()
-            .anyMatch(suffix -> fileId.getPath().endsWith(suffix));
-    }
-
 }

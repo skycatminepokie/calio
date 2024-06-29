@@ -1,5 +1,6 @@
 package io.github.apace100.calio;
 
+import io.github.apace100.calio.util.CalioResourceConditions;
 import net.fabricmc.api.ModInitializer;
 import net.minecraft.advancement.criterion.Criteria;
 import net.minecraft.item.ItemStack;
@@ -8,6 +9,7 @@ import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagKey;
+import net.minecraft.util.Identifier;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -17,13 +19,19 @@ import java.util.Map;
 public class Calio implements ModInitializer {
 
     public static final Logger LOGGER = LogManager.getLogger(Calio.class);
+	public static final String MOD_NAMESPACE = "calio";
 
 	public static final ThreadLocal<DynamicRegistryManager> DYNAMIC_REGISTRIES = new ThreadLocal<>();
 	public static final ThreadLocal<Map<TagKey<?>, Collection<RegistryEntry<?>>>> REGISTRY_TAGS = new ThreadLocal<>();
 
-	@Override
+	public static Identifier identifier(String path) {
+		return new Identifier(MOD_NAMESPACE, path);
+	}
+
+    @Override
 	public void onInitialize() {
         Criteria.register(CodeTriggerCriterion.ID.toString(), CodeTriggerCriterion.INSTANCE);
+		CalioResourceConditions.register();
 	}
 
 	public static boolean hasNonItalicName(ItemStack stack) {
