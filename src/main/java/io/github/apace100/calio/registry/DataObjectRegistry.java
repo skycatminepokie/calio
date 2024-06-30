@@ -1,31 +1,27 @@
 package io.github.apace100.calio.registry;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.gson.*;
 import io.github.apace100.calio.ClassUtil;
-import io.github.apace100.calio.data.MultiJsonDataLoader;
-import io.github.apace100.calio.data.SerializableData;
-import io.github.apace100.calio.data.SerializableDataType;
-import io.github.apace100.calio.data.SerializableDataTypes;
+import io.github.apace100.calio.data.*;
 import io.github.apace100.calio.network.CalioNetworking;
-import io.github.apace100.calio.util.OrderedResourceListeners;
 import io.netty.buffer.Unpooled;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.resource.IdentifiableResourceReloadListener;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.resource.ResourceManager;
+import net.minecraft.resource.ResourceType;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.InvalidIdentifierException;
 import net.minecraft.util.JsonHelper;
 import net.minecraft.util.profiler.Profiler;
+import org.apache.logging.log4j.util.TriConsumer;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.function.*;
 
 public class DataObjectRegistry<T extends DataObject<T>> {
 
@@ -35,42 +31,41 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     private final Identifier registryId;
     private final Class<T> objectClass;
 
-    private final HashMap<Identifier, T> idToEntry = new HashMap<>();
-    private final HashMap<T, Identifier> entryToId = new HashMap<>();
-    private final HashMap<Identifier, T> staticEntries = new HashMap<>();
+    private final Map<Identifier, T> idToEntry = new HashMap<>();
+    private final Map<T, Identifier> entryToId = new HashMap<>();
+    private final Map<Identifier, T> staticEntries = new HashMap<>();
 
     private final String factoryFieldName;
     private final DataObjectFactory<T> defaultFactory;
-    private final HashMap<Identifier, DataObjectFactory<T>> factoriesById = new HashMap<>();
-    private final HashMap<DataObjectFactory<T>, Identifier> factoryToId = new HashMap<>();
+    private final Map<Identifier, DataObjectFactory<T>> factoriesById = new HashMap<>();
+    private final Map<DataObjectFactory<T>, Identifier> factoryToId = new HashMap<>();
 
     private SerializableDataType<T> dataType;
     private SerializableDataType<List<T>> listDataType;
     private SerializableDataType<T> registryDataType;
     private SerializableDataType<Supplier<T>> lazyDataType;
 
-    private final Function<JsonElement, JsonElement> jsonPreprocessor;
+    @NotNull
+    private final UnaryOperator<JsonElement> jsonPreProcessor;
 
     private Loader loader;
 
-    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, Function<JsonElement, JsonElement> jsonPreprocessor) {
+    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor) {
         this.registryId = registryId;
         this.objectClass = objectClass;
         this.factoryFieldName = factoryFieldName;
         this.defaultFactory = defaultFactory;
-        this.jsonPreprocessor = jsonPreprocessor;
+        this.jsonPreProcessor = jsonPreProcessor;
     }
 
-    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, Function<JsonElement, JsonElement> jsonPreprocessor, String dataFolder, boolean useLoadingPriority, BiConsumer<Identifier, Exception> errorHandler) {
-        this(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreprocessor);
-        loader = new Loader(dataFolder, useLoadingPriority, errorHandler);
+    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor, String dataFolder, boolean useLoadingPriority, ImmutableSet.Builder<Identifier> dependencies, @Nullable BiConsumer<Identifier, Exception> legacyErrorHandler, @Nullable TriConsumer<Identifier, String, Exception> errorHandler, @Nullable ResourceType resourceType) {
+        this(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor);
+        this.loader = new Loader(dataFolder, useLoadingPriority, dependencies, legacyErrorHandler, errorHandler, resourceType);
     }
 
     /**
-     * Returns the resource reload listener which loads the data from datapacks.
-     * This is not registered automatically, thus you need to register it, preferably
-     * in an ordered resource listener entrypoint.
-     * @return
+     * @return the resource reload listener which loads the data from data packs. This is not registered automatically, thus you need to
+     *         register it, preferably in {@link net.fabricmc.fabric.api.resource.ResourceManagerHelper}
      */
     public IdentifiableResourceReloadListener getLoader() {
         return loader;
@@ -117,11 +112,11 @@ public class DataObjectRegistry<T extends DataObject<T>> {
                 continue;
             }
             buf.writeIdentifier(entry.getKey());
-            writeDataObject(buf, entry.getValue());
+            sendDataObject(buf, entry.getValue());
         }
     }
 
-    public void writeDataObject(PacketByteBuf buf, T t) {
+    public void sendDataObject(PacketByteBuf buf, T t) {
         DataObjectFactory<T> factory = t.getFactory();
         buf.writeIdentifier(factoryToId.get(factory));
         SerializableData.Instance data = factory.toData(t);
@@ -153,10 +148,12 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         return factory.fromData(data);
     }
 
+    public JsonElement writeDataObject(T t) {
+        return t.getFactory().getData().write(t.getFactory().toData(t));
+    }
+
     public T readDataObject(JsonElement element) {
-        if(jsonPreprocessor != null) {
-            element = jsonPreprocessor.apply(element);
-        }
+        element = jsonPreProcessor.apply(element);
         if(!element.isJsonObject()) {
             throw new JsonParseException(
                 "Could not read data object of type \"" + registryId +
@@ -253,13 +250,19 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         return lazyDataType;
     }
 
-    public SerializableDataType<Supplier<T>> createLazyDataType() {
+    private SerializableDataType<Supplier<T>> createLazyDataType() {
         return SerializableDataType.wrap(ClassUtil.castClass(Supplier.class),
             SerializableDataTypes.IDENTIFIER, lazy -> getId(lazy.get()), id -> () -> get(id));
     }
 
     private SerializableDataType<T> createDataType() {
-        return new SerializableDataType<>(objectClass, this::writeDataObject, this::receiveDataObject, this::readDataObject);
+        return new SerializableDataType<>(
+            ClassUtil.castClass(objectClass),
+            this::sendDataObject,
+            this::receiveDataObject,
+            this::readDataObject,
+            this::writeDataObject
+        );
     }
 
     private SerializableDataType<T> createRegistryDataType() {
@@ -277,73 +280,125 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         }
     }
 
-    private class Loader extends MultiJsonDataLoader implements IdentifiableResourceReloadListener {
+    private class Loader extends IdentifiableMultiJsonDataLoader implements IdentifiableResourceReloadListener {
 
-        private static final Gson GSON = (new GsonBuilder()).setPrettyPrinting().disableHtmlEscaping().create();
-        private static final HashMap<Identifier, Integer> LOADING_PRIORITIES = new HashMap<>();
+        private static final Map<Identifier, Integer> LOADING_PRIORITIES = new HashMap<>();
+        private static final Gson GSON = new GsonBuilder()
+            .setPrettyPrinting()
+            .create();
+
+        private final BiConsumer<Identifier, Exception> legacyErrorHandler;
+        private final TriConsumer<Identifier, String, Exception> errorHandler;
+
+        private final ImmutableSet<Identifier> dependencies;
         private final boolean useLoadingPriority;
-        private final BiConsumer<Identifier, Exception> errorHandler;
 
-        public Loader(String dataFolder, boolean useLoadingPriority, BiConsumer<Identifier, Exception> errorHandler) {
-            super(GSON, dataFolder);
+        public Loader(String dataFolder, boolean useLoadingPriority, ImmutableSet.Builder<Identifier> dependencies, @Nullable BiConsumer<Identifier, Exception> legacyErrorHandler, @Nullable TriConsumer<Identifier, String, Exception> errorHandler, @Nullable ResourceType resourceType) {
+            super(GSON, dataFolder, resourceType);
             this.useLoadingPriority = useLoadingPriority;
+            this.legacyErrorHandler = legacyErrorHandler;
             this.errorHandler = errorHandler;
+            this.dependencies = dependencies.build();
         }
 
         @Override
-        protected void apply(Map<Identifier, List<JsonElement>> data, ResourceManager manager, Profiler profiler) {
+        protected void apply(MultiJsonDataContainer prepared, ResourceManager manager, Profiler profiler) {
+
             clear();
             LOADING_PRIORITIES.clear();
-            data.forEach((id, jel) -> {
-                for(JsonElement je : jel) {
-                    try {
-                        SerializableData.CURRENT_NAMESPACE = id.getNamespace();
-                        SerializableData.CURRENT_PATH = id.getPath();
-                        JsonObject jo = je.getAsJsonObject();
-                        T t = readDataObject(je);
-                        if(useLoadingPriority) {
-                            int loadingPriority = JsonHelper.getInt(jo, "loading_priority", 0);
-                            if(!containsId(id) || LOADING_PRIORITIES.get(id) < loadingPriority) {
-                                LOADING_PRIORITIES.put(id, loadingPriority);
-                                register(id, t);
-                            }
-                        } else {
-                            register(id, t);
-                        }
-                    } catch (Exception e) {
-                        if(errorHandler != null) {
-                            errorHandler.accept(id, e);
-                        }
+
+            prepared.forEach((packName, id, jsonElement) -> {
+
+                try {
+
+                    SerializableData.CURRENT_NAMESPACE = id.getNamespace();
+                    SerializableData.CURRENT_PATH = id.getPath();
+
+                    if (!(jsonElement instanceof JsonObject jsonObject)) {
+                        throw new JsonSyntaxException("Expected a JSON object");
                     }
+
+                    T object = readDataObject(jsonObject);
+                    if (useLoadingPriority) {
+
+                        int loadingPriority = JsonHelper.getInt(jsonObject, "loading_priority", 0);
+                        if (!containsId(id) || LOADING_PRIORITIES.getOrDefault(id, 0) < loadingPriority) {
+                            LOADING_PRIORITIES.put(id, loadingPriority);
+                            register(id, object);
+                        }
+
+                    }
+
+                    else {
+                        register(id, object);
+                    }
+
                 }
+
+                catch (Exception e) {
+
+                    if (errorHandler != null) {
+                        errorHandler.accept(id, packName, e);
+                    }
+
+                    else if (legacyErrorHandler != null) {
+                        legacyErrorHandler.accept(id, e);
+                    }
+
+                }
+
             });
+
+            LOADING_PRIORITIES.clear();
+
         }
 
         @Override
         public Identifier getFabricId() {
             return registryId;
         }
+
+        @Override
+        public Collection<Identifier> getFabricDependencies() {
+            return dependencies;
+        }
+
     }
 
     public static class Builder<T extends DataObject<T>> {
 
+        private final ImmutableSet.Builder<Identifier> dependencies = new ImmutableSet.Builder<>();
+
         private final Identifier registryId;
         private final Class<T> objectClass;
-        private String factoryFieldName = "type";
-        private boolean autoSync = false;
+
         private DataObjectFactory<T> defaultFactory;
-        private Function<JsonElement, JsonElement> jsonPreprocessor;
+        private UnaryOperator<JsonElement> jsonPreProcessor = jsonElement -> jsonElement;
+
+        @Nullable
+        private BiConsumer<Identifier, Exception> legacyErrorHandler;
+        @Nullable
+        private TriConsumer<Identifier, String, Exception> errorHandler;
+
+        @Nullable
+        private ResourceType resourceType;
+
         private String dataFolder;
-        private boolean readFromData = false;
+        private String factoryFieldName = "type";
+
+        private boolean autoSync;
+        private boolean readFromData;
         private boolean useLoadingPriority;
-        private BiConsumer<Identifier, Exception> errorHandler;
 
         public Builder(Identifier registryId, Class<T> objectClass) {
+
             this.registryId = registryId;
             this.objectClass = objectClass;
-            if(REGISTRIES.containsKey(registryId)) {
+
+            if (REGISTRIES.containsKey(registryId)) {
                 throw new IllegalArgumentException("A data object registry with id \"" + registryId + "\" already exists.");
             }
+
         }
 
         public Builder<T> autoSync() {
@@ -356,8 +411,8 @@ public class DataObjectRegistry<T extends DataObject<T>> {
             return this;
         }
 
-        public Builder<T> jsonPreprocessor(Function<JsonElement, JsonElement> nonJsonObjectHandler) {
-            this.jsonPreprocessor = nonJsonObjectHandler;
+        public Builder<T> jsonPreprocessor(UnaryOperator<JsonElement> preProcessor) {
+            this.jsonPreProcessor = preProcessor;
             return this;
         }
 
@@ -367,29 +422,56 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         }
 
         public Builder<T> readFromData(String dataFolder, boolean useLoadingPriority) {
-            readFromData = true;
+            this.readFromData = true;
             this.dataFolder = dataFolder;
             this.useLoadingPriority = useLoadingPriority;
             return this;
         }
 
+        /**
+         *  <p>Use {@link #dataErrorHandler(TriConsumer)} instead.</p>
+         */
+        @Deprecated
         public Builder<T> dataErrorHandler(BiConsumer<Identifier, Exception> handler) {
+            this.legacyErrorHandler = handler;
+            return this;
+        }
+
+        public Builder<T> dataErrorHandler(TriConsumer<Identifier, String, Exception> handler) {
             this.errorHandler = handler;
             return this;
         }
 
-        public DataObjectRegistry<T> buildAndRegister() {
-            DataObjectRegistry<T> registry;
-            if(readFromData) {
-                registry = new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreprocessor, dataFolder, useLoadingPriority, errorHandler);
-            } else {
-                registry = new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreprocessor);
+        public Builder<T> dependencies(Identifier... dependencies) {
+
+            for (Identifier dependency : dependencies) {
+                this.dependencies.add(dependency);
             }
+
+            return this;
+
+        }
+
+        public Builder<T> resourceType(ResourceType resourceType) {
+            this.resourceType = resourceType;
+            return this;
+        }
+
+        public DataObjectRegistry<T> buildAndRegister() {
+
+            DataObjectRegistry<T> registry = readFromData
+                ? new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor, dataFolder, useLoadingPriority, dependencies, legacyErrorHandler, errorHandler, resourceType)
+                : new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor);
+
             REGISTRIES.put(registryId, registry);
-            if(autoSync) {
+            if (autoSync) {
                 AUTO_SYNC_SET.add(registryId);
             }
+
             return registry;
+
         }
+
     }
+
 }

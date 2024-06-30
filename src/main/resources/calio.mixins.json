@@ -10,7 +10,6 @@
         "EntityAttributeModifierAccessor",
         "IngredientAccessor",
         "RegistrySyncMixin",
-        "SinglePreparationResourceReloaderMixin",
         "TagManagerLoaderMixin",
         "WeightedListEntryAccessor"
     ],

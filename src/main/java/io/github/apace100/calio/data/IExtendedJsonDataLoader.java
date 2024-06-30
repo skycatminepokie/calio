@@ -17,25 +17,24 @@ public interface IExtendedJsonDataLoader {
     });
 
     /**
-     *  <p>Called when a JSON data currently being prepared has been rejected due to its resource conditions not being fulfilled.</p>
+     * <p>Called when a JSON data currently being prepared has been rejected due to its resource conditions not being fulfilled.</p>
      *
-     *  @param packName     the name of the data/resource pack the resource is from
-     *  @param fileId       the file ID (with the file extension suffix and directory) of the JSON data
-     *  @param resourceId   the ID (without the file extension suffix and directory) of the JSON data
+     * @param packName   the name of the data/resource pack the JSON is from
+     * @param resourceId the ID (without the file extension suffix and directory) of the JSON data
      */
-    default void onReject(String packName, Identifier fileId, Identifier resourceId) {
+    default void onReject(String packName, Identifier resourceId) {
 
     }
 
     /**
-     *  <p>Called when an error occurs upon preparing a JSON data.</p>
+     * <p>Called when an error occurs upon preparing a JSON data.</p>
      *
-     *  @param packName     the name of the data/resource pack the resource is from
-     *  @param fileId       the file ID (<b>with</b> the file extension suffix and directory) of the JSON data
-     *  @param resourceId   the ID (<b>without</b> the file extension suffix and directory) of the JSON data
-     *  @param exception    the {@link Exception} thrown when preparing the JSON data
+     * @param packName      the name of the data/resource pack the JSON is from
+     * @param resourceId    the ID (<b>without</b> the file extension suffix and directory) of the JSON data
+     * @param fileExtension the file extension of the JSON
+     * @param exception     the {@link Exception} thrown when preparing the JSON data
      */
-    default void onError(String packName, Identifier fileId, Identifier resourceId, Exception exception) {
+    default void onError(String packName, Identifier resourceId, String fileExtension, Exception exception) {
 
     }
 

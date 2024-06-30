@@ -5,13 +5,14 @@ import net.minecraft.util.Identifier;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
-public class MultiJsonDataContainer extends LinkedHashMap<Identifier, LinkedHashMap<String, List<JsonElement>>> {
+public class MultiJsonDataContainer extends LinkedHashMap<String, Map<Identifier, List<JsonElement>>> {
 
     public void forEach(Processor processor) {
-        super.forEach((id, packedJsonData) ->
-            packedJsonData.forEach((packName, jsonElements) ->
-                jsonElements.forEach(jsonElement -> processor.process(packName, id, jsonElement))));
+        this.forEach((packName, idAndData) ->
+            idAndData.forEach((id, data) ->
+                data.forEach(jsonElement -> processor.process(packName, id, jsonElement))));
     }
 
     @FunctionalInterface

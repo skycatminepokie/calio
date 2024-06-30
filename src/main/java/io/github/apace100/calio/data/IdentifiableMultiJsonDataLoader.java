@@ -8,10 +8,10 @@ import io.github.apace100.calio.util.CalioResourceConditions;
 import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
-import net.minecraft.resource.SinglePreparationResourceReloader;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
+import org.jetbrains.annotations.Nullable;
 import org.quiltmc.parsers.json.JsonFormat;
 import org.quiltmc.parsers.json.JsonReader;
 import org.quiltmc.parsers.json.gson.GsonReader;
@@ -22,19 +22,24 @@ import java.io.Reader;
 import java.util.*;
 
 /**
- *  Similar to {@link MultiJsonDataLoader}, except it provides a {@link MultiJsonDataContainer}, which contains a map of {@link Identifier} and a
- *  {@link List} of {@link JsonElement JsonElements} associated with a {@link String} that identifies the data/resource pack the JSON data is from.
+ *  <p>Similar to {@link MultiJsonDataLoader}, except it provides a {@link MultiJsonDataContainer}, which contains a map of {@link Identifier} and a
+ *  {@link List} of {@link JsonElement JsonElements} associated with a {@link String} that identifies the data/resource pack the JSON data is from.</p>
  */
-public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationResourceReloader<MultiJsonDataContainer> implements IExtendedJsonDataLoader {
+public abstract class IdentifiableMultiJsonDataLoader extends ExtendedSinglePreparationResourceReloader<MultiJsonDataContainer> implements IExtendedJsonDataLoader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IdentifiableMultiJsonDataLoader.class);
 
     private final Gson gson;
 
+    @Nullable
     protected final ResourceType resourceType;
     protected final String directoryName;
 
-    public IdentifiableMultiJsonDataLoader(Gson gson, String directoryName, ResourceType resourceType) {
+    public IdentifiableMultiJsonDataLoader(Gson gson, String directoryName) {
+        this(gson, directoryName, null);
+    }
+
+    public IdentifiableMultiJsonDataLoader(Gson gson, String directoryName, @Nullable ResourceType resourceType) {
         this.gson = gson;
         this.directoryName = directoryName;
         this.resourceType = resourceType;
@@ -62,21 +67,17 @@ public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationR
                         throw new JsonParseException("JSON cannot be empty!");
                     }
 
-                    else if (jsonElement instanceof JsonObject jsonObject && !CalioResourceConditions.objectMatchesConditions(resourceId, jsonObject)) {
-                        this.onReject(packName, fileId, resourceId);
-                    }
-
                     else {
                         result
-                            .computeIfAbsent(resourceId, k -> new LinkedHashMap<>())
-                            .computeIfAbsent(packName, k -> new LinkedList<>())
+                            .computeIfAbsent(packName, k -> new LinkedHashMap<>())
+                            .computeIfAbsent(resourceId, k -> new LinkedList<>())
                             .add(jsonElement);
                     }
 
                 }
 
                 catch (Exception e) {
-                    this.onError(packName, fileId, resourceId, e);
+                    this.onError(packName, resourceId, fileExtension, e);
                 }
 
             }
@@ -88,8 +89,55 @@ public abstract class IdentifiableMultiJsonDataLoader extends SinglePreparationR
     }
 
     @Override
-    public void onError(String packName, Identifier fileId, Identifier resourceId, Exception exception) {
-        String filePath = packName + "/" + resourceType.getDirectory() + "/" + fileId.getNamespace() + "/" + fileId.getPath();
+    protected void preApply(MultiJsonDataContainer prepared, ResourceManager manager, Profiler profiler) {
+
+        var preparedEntryIterator = prepared.entrySet().iterator();
+        while (preparedEntryIterator.hasNext()) {
+
+            var preparedEntry = preparedEntryIterator.next();
+
+            String packName = preparedEntry.getKey();
+            Map<Identifier, List<JsonElement>> idAndJsonData = preparedEntry.getValue();
+
+            var idAndJsonDataEntryIterator = idAndJsonData.entrySet().iterator();
+            while (idAndJsonDataEntryIterator.hasNext()) {
+
+                var idAndJsonDataEntry = idAndJsonDataEntryIterator.next();
+
+                Identifier id = idAndJsonDataEntry.getKey();
+                List<JsonElement> jsonData = idAndJsonDataEntry.getValue();
+
+                Iterator<JsonElement> jsonIterator = jsonData.iterator();
+                while (jsonIterator.hasNext()) {
+
+                    JsonElement json = jsonIterator.next();
+                    if (!(json instanceof JsonObject jsonObject) || CalioResourceConditions.objectMatchesConditions(id, jsonObject)) {
+                        continue;
+                    }
+
+                    this.onReject(packName, id);
+                    jsonIterator.remove();
+
+                }
+
+                if (jsonData.isEmpty()) {
+                    idAndJsonDataEntryIterator.remove();
+                }
+
+            }
+
+            if (idAndJsonData.isEmpty()) {
+                preparedEntryIterator.remove();
+            }
+
+        }
+
+    }
+
+    @Override
+    public void onError(String packName, Identifier resourceId, String fileExtension, Exception exception) {
+        String filePath = packName + "/" + (resourceType != null ? resourceType.getDirectory() : "...") + "/" + resourceId.getNamespace() + "/" + directoryName + "/" + resourceId.getPath() + fileExtension;
         LOGGER.error("Couldn't parse data file \"{}\" from \"{}\"", resourceId, filePath, exception);
     }
+
 }

@@ -12,19 +12,25 @@ import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.jetbrains.annotations.ApiStatus;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
 
 public class Calio implements ModInitializer {
 
     public static final Logger LOGGER = LogManager.getLogger(Calio.class);
 	public static final String MOD_NAMESPACE = "calio";
 
+	@ApiStatus.Internal
+	public static final ThreadLocal<Set<String>> LOADED_NAMESPACES = new ThreadLocal<>();
+	@ApiStatus.Internal
 	public static final ThreadLocal<DynamicRegistryManager> DYNAMIC_REGISTRIES = new ThreadLocal<>();
+	@ApiStatus.Internal
 	public static final ThreadLocal<Map<TagKey<?>, Collection<RegistryEntry<?>>>> REGISTRY_TAGS = new ThreadLocal<>();
 
-	public static Identifier identifier(String path) {
+    public static Identifier identifier(String path) {
 		return new Identifier(MOD_NAMESPACE, path);
 	}
 

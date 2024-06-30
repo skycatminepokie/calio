@@ -1,7 +1,6 @@
 package io.github.apace100.calio.data;
 
 import com.google.gson.*;
-import io.github.apace100.calio.util.CalioResourceConditions;
 import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.SinglePreparationResourceReloader;
@@ -22,7 +21,10 @@ import java.util.*;
  *  with an {@link Identifier}, where each element is loaded by different resource packs. This allows for overriding and merging several
  *  data files into one, similar to how tags work. There is no guarantee on the order of the resulting list, so make sure to implement
  *  some kind of "priority" system.</p>
+ *
+ *  <p>This is <b>deprecated</b> in favor of using {@link IdentifiableMultiJsonDataLoader}.</p>
  */
+@Deprecated
 public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloader<Map<Identifier, List<JsonElement>>> implements IExtendedJsonDataLoader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(MultiJsonDataLoader.class);
@@ -57,10 +59,6 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
                         throw new JsonParseException("JSON cannot be empty!");
                     }
 
-                    else if (jsonElement instanceof JsonObject jsonObject && !CalioResourceConditions.objectMatchesConditions(resourceId, jsonObject)) {
-                        this.onReject(packName, fileId, resourceId);
-                    }
-
                     else {
                         result
                             .computeIfAbsent(resourceId, k -> new LinkedList<>())
@@ -70,7 +68,7 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
                 }
 
                 catch (Exception e) {
-                    this.onError(packName, fileId, resourceId, e);
+                    this.onError(packName, resourceId, fileExtension, e);
                 }
 
             }
@@ -82,8 +80,8 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
     }
 
     @Override
-    public void onError(String packName, Identifier fileId , Identifier resourceId, Exception exception) {
-        String filePath = packName + "/.../" + resourceId.getNamespace() + "/" + resourceId.getPath();
+    public void onError(String packName, Identifier resourceId, String fileExtension, Exception exception) {
+        String filePath = packName + "/.../" + resourceId.getNamespace() + "/" + directoryName + "/" + resourceId.getPath() + fileExtension;
         LOGGER.error("Couldn't parse data file \"{}\" from \"{}\":", resourceId, filePath, exception);
     }
 

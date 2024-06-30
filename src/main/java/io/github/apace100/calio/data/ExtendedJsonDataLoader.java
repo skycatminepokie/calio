@@ -6,7 +6,6 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import io.github.apace100.calio.util.CalioResourceConditions;
 import net.minecraft.resource.ResourceManager;
-import net.minecraft.resource.SinglePreparationResourceReloader;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
@@ -23,7 +22,7 @@ import java.util.Map;
 /**
  *  Similar to {@link net.minecraft.resource.JsonDataLoader}, except it supports the JSON5 and JSONC spec.
  */
-public abstract class ExtendedJsonDataLoader extends SinglePreparationResourceReloader<Map<Identifier, JsonElement>> implements IExtendedJsonDataLoader {
+public abstract class ExtendedJsonDataLoader extends ExtendedSinglePreparationResourceReloader<Map<Identifier, JsonElement>> implements IExtendedJsonDataLoader {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ExtendedJsonDataLoader.class);
 
@@ -56,16 +55,12 @@ public abstract class ExtendedJsonDataLoader extends SinglePreparationResourceRe
                     throw new JsonParseException("JSON cannot be empty!");
                 }
 
-                else if (jsonElement instanceof JsonObject jsonObject && !CalioResourceConditions.objectMatchesConditions(resourceId, jsonObject)) {
-                    this.onReject(packName, fileId, resourceId);
-                }
-
                 if (result.put(resourceId, jsonElement) != null) {
                     throw new IllegalStateException("Duplicate data file ignored with ID " + resourceId);
                 }
 
             } catch (Exception e) {
-                this.onError(packName, fileId, resourceId, e);
+                this.onError(packName, resourceId, fileExtension, e);
             }
 
         });
@@ -75,8 +70,30 @@ public abstract class ExtendedJsonDataLoader extends SinglePreparationResourceRe
     }
 
     @Override
-    public void onError(String packName, Identifier fileId, Identifier resourceId, Exception exception) {
-        String filePath = packName + "/.../" + fileId.getNamespace() + "/" + fileId.getPath();
+    protected void preApply(Map<Identifier, JsonElement> prepared, ResourceManager manager, Profiler profiler) {
+
+        var preparedEntryIterator = prepared.entrySet().iterator();
+        while (preparedEntryIterator.hasNext()) {
+
+            var preparedEntry = preparedEntryIterator.next();
+
+            Identifier id = preparedEntry.getKey();
+            JsonElement jsonElement = preparedEntry.getValue();
+
+            if (!(jsonElement instanceof JsonObject jsonObject) || CalioResourceConditions.objectMatchesConditions(id, jsonObject)) {
+                continue;
+            }
+
+            this.onReject("", id);
+            preparedEntryIterator.remove();
+
+        }
+
+    }
+
+    @Override
+    public void onError(String packName, Identifier resourceId, String fileExtension, Exception exception) {
+        String filePath = packName + "/.../" + resourceId.getNamespace() + "/" + directoryName + "/" + resourceId.getPath() + fileExtension;
         LOGGER.error("Couldn't parse data file \"{}\" from \"{}\":", resourceId, filePath, exception);
     }
 

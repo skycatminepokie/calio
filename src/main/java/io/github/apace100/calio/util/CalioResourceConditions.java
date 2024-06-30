@@ -7,15 +7,12 @@ import net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditions;
 import net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.JsonHelper;
-import org.jetbrains.annotations.ApiStatus;
 
 import java.util.Set;
 import java.util.function.Predicate;
 
 public class CalioResourceConditions {
 
-    @ApiStatus.Internal
-    public static final ThreadLocal<Set<String>> NAMESPACES = new ThreadLocal<>();
     public static final IdentifierAlias ALIASES = new IdentifierAlias();
 
     public static void register() {
@@ -26,7 +23,7 @@ public class CalioResourceConditions {
     private static boolean namespacesLoaded(JsonObject jsonObject, boolean and) {
 
         JsonArray namespacesJson = JsonHelper.getArray(jsonObject, "namespaces");
-        Set<String> loadedNamespaces = NAMESPACES.get();
+        Set<String> loadedNamespaces = Calio.LOADED_NAMESPACES.get();
 
         if (loadedNamespaces == null) {
             Calio.LOGGER.warn("Failed to retrieve loaded namespaces!");

@@ -20,6 +20,7 @@ public abstract class DataPackContentsMixin {
     @Inject(method = "reload", at = @At("HEAD"))
     private static void calio$cacheDynamicRegistries(ResourceManager manager, DynamicRegistryManager.Immutable dynamicRegistryManager, FeatureSet enabledFeatures, CommandManager.RegistrationEnvironment environment, int functionPermissionLevel, Executor prepareExecutor, Executor applyExecutor, CallbackInfoReturnable<CompletableFuture<DataPackContents>> cir) {
         Calio.DYNAMIC_REGISTRIES.set(dynamicRegistryManager);
+        Calio.LOADED_NAMESPACES.set(manager.getAllNamespaces());
     }
 
 }
