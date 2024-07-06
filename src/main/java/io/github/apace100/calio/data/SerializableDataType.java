@@ -14,6 +14,7 @@ import io.github.apace100.calio.util.DynamicIdentifier;
 import io.github.apace100.calio.util.TagLike;
 import io.github.apace100.calio.util.IdentifierAlias;
 import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
@@ -31,25 +32,14 @@ import java.util.function.*;
 public class SerializableDataType<T> {
 
     private final Class<T> dataClass;
-    private final BiConsumer<PacketByteBuf, T> send;
-    private final Function<PacketByteBuf, T> receive;
+    private final BiConsumer<RegistryByteBuf, T> send;
+    private final Function<RegistryByteBuf, T> receive;
     private final Function<JsonElement, T> read;
     private final Function<T, JsonElement> write;
 
-    @Deprecated
     public SerializableDataType(Class<T> dataClass,
-                                BiConsumer<PacketByteBuf, T> send,
-                                Function<PacketByteBuf, T> receive,
-                                Function<JsonElement, T> read) {
-        this(dataClass, send, receive, read, (obj) -> {
-            Calio.LOGGER.warn("Could not write serializable data type of class {} as it does not have a write function set.", dataClass.getName());
-            return new JsonObject();
-        });
-    }
-
-    public SerializableDataType(Class<T> dataClass,
-                                BiConsumer<PacketByteBuf, T> send,
-                                Function<PacketByteBuf, T> receive,
+                                BiConsumer<RegistryByteBuf, T> send,
+                                Function<RegistryByteBuf, T> receive,
                                 Function<JsonElement, T> read,
                                 Function<T, JsonElement> write) {
         this.dataClass = dataClass;
@@ -59,11 +49,11 @@ public class SerializableDataType<T> {
         this.write = write;
     }
 
-    public void send(PacketByteBuf buffer, Object value) {
+    public void send(RegistryByteBuf buffer, Object value) {
         send.accept(buffer, cast(value));
     }
 
-    public T receive(PacketByteBuf buffer) {
+    public T receive(RegistryByteBuf buffer) {
         return receive.apply(buffer);
     }
 
@@ -268,19 +258,16 @@ public class SerializableDataType<T> {
                     } else if(primitive.isString()) {
                         String enumName = primitive.getAsString();
                         try {
-                            T t = Enum.valueOf(dataClass, enumName);
-                            return t;
+                            return Enum.valueOf(dataClass, enumName);
                         } catch(IllegalArgumentException e0) {
                             try {
-                                T t = Enum.valueOf(dataClass, enumName.toUpperCase(Locale.ROOT));
-                                return t;
+                                return Enum.valueOf(dataClass, enumName.toUpperCase(Locale.ROOT));
                             } catch (IllegalArgumentException e1) {
                                 try {
                                     if(additionalMap == null || !additionalMap.containsKey(enumName)) {
                                         throw new IllegalArgumentException();
                                     }
-                                    T t = additionalMap.get(enumName);
-                                    return t;
+                                    return additionalMap.get(enumName);
                                 } catch (IllegalArgumentException e2) {
                                     T[] enumValues = dataClass.getEnumConstants();
                                     String stringOf = enumValues[0].name() + ", " + enumValues[0].name().toLowerCase(Locale.ROOT);
@@ -301,14 +288,14 @@ public class SerializableDataType<T> {
     public static <V> SerializableDataType<Map<String, V>> map(SerializableDataType<V> valueDataType) {
         return new SerializableDataType<>(
             ClassUtil.castClass(Map.class),
-            (buffer, map) -> buffer.writeMap(
+            (buf, map) -> buf.writeMap(
                 map,
                 PacketByteBuf::writeString,
-                valueDataType::send
+                (valueBuf, value) -> valueDataType.send((RegistryByteBuf) valueBuf, value)
             ),
-            buffer -> buffer.readMap(
+            buf -> buf.readMap(
                 PacketByteBuf::readString,
-                valueDataType::receive
+                valueBuf -> valueDataType.receive((RegistryByteBuf) valueBuf)
             ),
             jsonElement -> {
 
@@ -348,8 +335,7 @@ public class SerializableDataType<T> {
                             if(map == null || !map.containsKey(name)) {
                                 throw new IllegalArgumentException();
                             }
-                            T t = map.get(name);
-                            return t;
+                            return map.get(name);
                         } catch (IllegalArgumentException e2) {
                             throw new JsonSyntaxException("Expected value to be a string of: " + map.keySet().stream().reduce((s0, s1) -> s0 + ", " + s1));
                         }
@@ -385,6 +371,19 @@ public class SerializableDataType<T> {
                 return tagKey;
 
             }
+        );
+    }
+
+    public static <T> SerializableDataType<RegistryEntry<T>> registryEntry(Registry<T> registry) {
+        return wrap(
+            ClassUtil.castClass(RegistryEntry.class),
+            SerializableDataTypes.IDENTIFIER,
+            registryEntry -> registryEntry.getKey()
+                .orElseThrow(() -> new IllegalArgumentException("Registry entry \"" + registryEntry + "\" is not registered in registry \"" + registry.getKey().getValue() + "\""))
+                .getValue(),
+            id -> registry
+                .getEntry(id)
+                .orElseThrow(() -> new IllegalArgumentException("Type \"" + id + "\" is not registered in registry \"" + registry.getKey().getValue() + "\""))
         );
     }
 

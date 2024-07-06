@@ -49,7 +49,7 @@ public class OrderedResourceListener implements ModInitializer {
         }
 
         public Registration after(String identifier) {
-            return after(new Identifier(identifier));
+            return after(Identifier.of(identifier));
         }
 
         public Registration after(Identifier identifier) {
@@ -62,7 +62,7 @@ public class OrderedResourceListener implements ModInitializer {
         }
 
         public Registration before(String identifier) {
-            return before(new Identifier(identifier));
+            return before(Identifier.of(identifier));
         }
 
         public Registration before(Identifier identifier) {

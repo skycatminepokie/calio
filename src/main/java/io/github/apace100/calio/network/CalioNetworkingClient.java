@@ -1,38 +1,23 @@
 package io.github.apace100.calio.network;
 
+import io.github.apace100.calio.network.packet.s2c.SyncDataObjectRegistryS2CPacket;
 import io.github.apace100.calio.registry.DataObjectRegistry;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PacketSender;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.util.Identifier;
 
 @Environment(EnvType.CLIENT)
 public class CalioNetworkingClient {
 
     public static void registerReceivers() {
-        ClientPlayConnectionEvents.INIT.register(((clientPlayNetworkHandler, minecraftClient) -> {
-            ClientPlayNetworking.registerReceiver(
-                CalioNetworking.SYNC_DATA_OBJECT_REGISTRY,
-                CalioNetworkingClient::onDataObjectRegistrySync
-            );
-        }));
+        ClientPlayConnectionEvents.INIT.register((handler, client) ->
+            ClientPlayNetworking.registerReceiver(SyncDataObjectRegistryS2CPacket.PACKET_ID, CalioNetworkingClient::onDataObjectRegistrySync)
+        );
     }
 
-    private static void onDataObjectRegistrySync(
-        MinecraftClient minecraftClient,
-        ClientPlayNetworkHandler clientPlayNetworkHandler,
-        PacketByteBuf packetByteBuf,
-        PacketSender packetSender) {
-        Identifier registryId = packetByteBuf.readIdentifier();
-        DataObjectRegistry.getRegistry(registryId).receive(packetByteBuf,
-            minecraftClient.isIntegratedServerRunning() ? r -> {} : minecraftClient::execute);
-        /*minecraftClient.execute(() -> {
-            DataObjectRegistry.getRegistry(registryId).receive(packetByteBuf);
-        });*/
+    private static void onDataObjectRegistrySync(SyncDataObjectRegistryS2CPacket payload, ClientPlayNetworking.Context context) {
+        DataObjectRegistry.updateRegistry(payload.registry());
     }
+
 }

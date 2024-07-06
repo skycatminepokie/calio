@@ -49,7 +49,7 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
             JsonFormat jsonFormat = this.getValidFormats().get(fileExtension);
             for (Resource resource : resources) {
 
-                String packName = resource.getResourcePackName();
+                String packName = resource.getPackId();
                 try (Reader resourceReader = resource.getReader()) {
 
                     GsonReader gsonReader = new GsonReader(JsonReader.create(resourceReader, jsonFormat));

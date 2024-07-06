@@ -4,7 +4,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
-import io.github.apace100.calio.util.CalioResourceConditions;
+import io.github.apace100.calio.Calio;
+import net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.profiler.Profiler;
@@ -44,7 +45,7 @@ public abstract class ExtendedJsonDataLoader extends ExtendedSinglePreparationRe
             String fileExtension = "." + FilenameUtils.getExtension(fileId.getPath());
 
             JsonFormat jsonFormat = this.getValidFormats().get(fileExtension);
-            String packName = resource.getResourcePackName();
+            String packName = resource.getPackId();
 
             try (Reader resourceReader = resource.getReader()) {
 
@@ -80,7 +81,7 @@ public abstract class ExtendedJsonDataLoader extends ExtendedSinglePreparationRe
             Identifier id = preparedEntry.getKey();
             JsonElement jsonElement = preparedEntry.getValue();
 
-            if (!(jsonElement instanceof JsonObject jsonObject) || CalioResourceConditions.objectMatchesConditions(id, jsonObject)) {
+            if (!(jsonElement instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get())) {
                 continue;
             }
 

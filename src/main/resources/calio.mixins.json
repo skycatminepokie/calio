@@ -4,20 +4,13 @@
     "package": "io.github.apace100.calio.mixin",
     "compatibilityLevel": "JAVA_16",
     "mixins": [
-        "CustomNonItalicNameMixin$RemoveNonItalicOnRename",
         "DataPackContentsMixin",
-        "DontOverwriteAttrModsMixin",
-        "EntityAttributeModifierAccessor",
         "IngredientAccessor",
-        "RegistrySyncMixin",
+        "ResourceConditionTypeMixin",
         "TagManagerLoaderMixin",
         "WeightedListEntryAccessor"
     ],
-    "client": [
-        "CustomNonItalicNameMixin$ModifyItalicDisplayHud",
-        "CustomNonItalicNameMixin$ModifyItalicDisplayItem",
-        "HandledScreenFocusedSlotAccessor"
-    ],
+    "client": [],
     "injectors": {
         "defaultRequire": 1
   }

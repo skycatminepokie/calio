@@ -6,6 +6,7 @@ import com.google.gson.JsonSyntaxException;
 import io.github.apace100.calio.Calio;
 import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.util.Identifier;
 
 import java.util.HashMap;
@@ -39,7 +40,7 @@ public class SerializableData {
         return this;
     }
 
-    public void write(PacketByteBuf buffer, Instance instance) {
+    public void write(RegistryByteBuf buffer, Instance instance) {
         dataFields.forEach((name, field) -> {
             try {
 
@@ -75,7 +76,7 @@ public class SerializableData {
 
     }
 
-    public Instance read(PacketByteBuf buffer) {
+    public Instance read(RegistryByteBuf buffer) {
 
         Instance instance = new Instance();
         dataFields.forEach((name, field) -> {

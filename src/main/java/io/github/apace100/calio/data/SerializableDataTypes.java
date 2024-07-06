@@ -4,22 +4,23 @@ import com.google.common.collect.HashBiMap;
 import com.google.common.collect.ImmutableMap;
 import com.google.gson.*;
 import com.google.gson.internal.LazilyParsedNumber;
-import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.serialization.Codec;
 import com.mojang.serialization.JsonOps;
 import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.ClassUtil;
-import io.github.apace100.calio.SerializationHelper;
-import io.github.apace100.calio.mixin.EntityAttributeModifierAccessor;
 import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.util.*;
+import io.netty.buffer.ByteBuf;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.client.render.CameraSubmersionType;
+import net.minecraft.block.enums.CameraSubmersionType;
 import net.minecraft.command.argument.BlockArgumentParser;
 import net.minecraft.command.argument.NbtPathArgumentType;
+import net.minecraft.component.ComponentChanges;
+import net.minecraft.component.type.FoodComponent;
+import net.minecraft.component.type.PotionContentsComponent;
 import net.minecraft.enchantment.Enchantment;
-import net.minecraft.entity.EntityGroup;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.attribute.EntityAttribute;
@@ -28,22 +29,29 @@ import net.minecraft.entity.damage.DamageType;
 import net.minecraft.entity.effect.StatusEffect;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.fluid.Fluid;
-import net.minecraft.item.FoodComponent;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.loot.condition.LootCondition;
+import net.minecraft.loot.function.LootFunction;
 import net.minecraft.nbt.*;
 import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.codec.PacketCodec;
+import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.particle.ParticleEffect;
 import net.minecraft.particle.ParticleType;
+import net.minecraft.particle.ParticleTypes;
+import net.minecraft.particle.SimpleParticleType;
 import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.Recipe;
 import net.minecraft.recipe.RecipeEntry;
 import net.minecraft.registry.*;
+import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.sound.SoundEvent;
 import net.minecraft.stat.Stat;
 import net.minecraft.stat.StatType;
 import net.minecraft.registry.tag.*;
 import net.minecraft.text.Text;
+import net.minecraft.text.TextCodecs;
 import net.minecraft.util.*;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
@@ -166,19 +174,14 @@ public final class SerializableDataTypes {
         },
         buf -> {
             byte type = buf.readByte();
-            switch(type) {
-                case 0:
-                    return buf.readDouble();
-                case 1:
-                    return buf.readFloat();
-                case 2:
-                    return buf.readInt();
-                case 3:
-                    return buf.readLong();
-                case 4:
-                    return new LazilyParsedNumber(buf.readString());
-            }
-            throw new RuntimeException("Could not receive number, unexpected type id \"" + type + "\" (allowed range: [0-4])");
+            return switch (type) {
+                case 0 -> buf.readDouble();
+                case 1 -> buf.readFloat();
+                case 2 -> buf.readInt();
+                case 3 -> buf.readLong();
+                case 4 -> new LazilyParsedNumber(buf.readString());
+                default -> throw new RuntimeException("Could not receive number, unexpected type id \"" + type + "\" (allowed range: [0-4])");
+            };
         },
         je -> {
             if(je.isJsonPrimitive()) {
@@ -247,7 +250,7 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<Identifier>> IDENTIFIERS = SerializableDataType.list(IDENTIFIER);
 
-    public static final SerializableDataType<Enchantment> ENCHANTMENT = SerializableDataType.registry(Enchantment.class, Registries.ENCHANTMENT);
+    public static final SerializableDataType<RegistryKey<Enchantment>> ENCHANTMENT = SerializableDataType.registryKey(RegistryKeys.ENCHANTMENT);
 
     private static final Set<RegistryKey<World>> VANILLA_DIMENSIONS = Set.of(
         World.OVERWORLD,
@@ -259,24 +262,37 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<EntityAttribute> ATTRIBUTE = SerializableDataType.registry(EntityAttribute.class, Registries.ATTRIBUTE);
 
+    public static final SerializableDataType<List<EntityAttribute>> ATTRIBUTES = SerializableDataType.list(ATTRIBUTE);
+
+    public static final SerializableDataType<RegistryEntry<EntityAttribute>> ATTRIBUTE_ENTRY = SerializableDataType.registryEntry(Registries.ATTRIBUTE);
+
+    public static final SerializableDataType<List<RegistryEntry<EntityAttribute>>> ATTRIBUTE_ENTRIES = SerializableDataType.list(ATTRIBUTE_ENTRY);
+
     public static final SerializableDataType<EntityAttributeModifier.Operation> MODIFIER_OPERATION = SerializableDataType.enumValue(EntityAttributeModifier.Operation.class);
 
-    public static final SerializableDataType<EntityAttributeModifier> ATTRIBUTE_MODIFIER = SerializableDataType.compound(EntityAttributeModifier.class, new SerializableData()
-            .add("name", STRING, "Unnamed attribute modifier")
-            .add("operation", MODIFIER_OPERATION)
-            .add("value", DOUBLE),
+    public static final SerializableDataType<EntityAttributeModifier> ATTRIBUTE_MODIFIER = SerializableDataType.compound(
+        EntityAttributeModifier.class,
+        new SerializableData()
+            .add("id", IDENTIFIER)
+            .add("value", DOUBLE)
+            .add("operation", MODIFIER_OPERATION),
         data -> new EntityAttributeModifier(
-            data.getString("name"),
+            data.getId("id"),
             data.getDouble("value"),
             data.get("operation")
         ),
-        (serializableData, modifier) -> {
-            SerializableData.Instance inst = serializableData.new Instance();
-            inst.set("name", ((EntityAttributeModifierAccessor) modifier).getName());
-            inst.set("value", modifier.getValue());
-            inst.set("operation", modifier.getOperation());
-            return inst;
-        });
+        (serializableData, entityAttributeModifier) -> {
+
+            SerializableData.Instance data = serializableData.new Instance();
+
+            data.set("id", entityAttributeModifier.id());
+            data.set("value", entityAttributeModifier.value());
+            data.set("operation", entityAttributeModifier.operation());
+
+            return data;
+
+        }
+    );
 
     public static final SerializableDataType<List<EntityAttributeModifier>> ATTRIBUTE_MODIFIERS =
         SerializableDataType.list(ATTRIBUTE_MODIFIER);
@@ -288,12 +304,42 @@ public final class SerializableDataTypes {
     public static final SerializableDataType<List<StatusEffect>> STATUS_EFFECTS =
         SerializableDataType.list(STATUS_EFFECT);
 
-    public static final SerializableDataType<StatusEffectInstance> STATUS_EFFECT_INSTANCE = new SerializableDataType<>(
-        StatusEffectInstance.class,
-        SerializationHelper::writeStatusEffect,
-        SerializationHelper::readStatusEffect,
-        SerializationHelper::readStatusEffect,
-        SerializationHelper::writeStatusEffect);
+    public static final SerializableDataType<RegistryEntry<StatusEffect>> STATUS_EFFECT_ENTRY = SerializableDataType.registryEntry(Registries.STATUS_EFFECT);
+
+    public static final SerializableDataType<List<RegistryEntry<StatusEffect>>> STATUS_EFFECT_ENTRIES = SerializableDataType.list(STATUS_EFFECT_ENTRY);
+
+    public static final SerializableDataType<StatusEffectInstance> STATUS_EFFECT_INSTANCE = SerializableDataType.compound(
+        ClassUtil.castClass(StatusEffectInstance.class),
+        new SerializableData()
+            .add("effect", STATUS_EFFECT_ENTRY)
+            .add("duration", INT, 100)
+            .add("amplifier", INT, 0)
+            .add("is_ambient", BOOLEAN, false)
+            .add("show_particles", BOOLEAN, true)
+            .add("show_icon", BOOLEAN, true),
+        data -> new StatusEffectInstance(
+            data.get("effect"),
+            data.getInt("duration"),
+            data.getInt("amplifier"),
+            data.getBoolean("is_ambient"),
+            data.getBoolean("show_particles"),
+            data.getBoolean("show_icon")
+        ),
+        (serializableData, statusEffectInstance) -> {
+
+            SerializableData.Instance data = serializableData.new Instance();
+
+            data.set("effect", statusEffectInstance.getEffectType());
+            data.set("duration", statusEffectInstance.getDuration());
+            data.set("amplifier", statusEffectInstance.getAmplifier());
+            data.set("is_ambient", statusEffectInstance.isAmbient());
+            data.set("show_particles", statusEffectInstance.shouldShowParticles());
+            data.set("show_icon", statusEffectInstance.shouldShowIcon());
+
+            return data;
+
+        }
+    );
 
     public static final SerializableDataType<List<StatusEffectInstance>> STATUS_EFFECT_INSTANCES =
         SerializableDataType.list(STATUS_EFFECT_INSTANCE);
@@ -356,9 +402,9 @@ public final class SerializableDataTypes {
 
     // An alternative version of an ingredient deserializer which allows `minecraft:air`
     public static final SerializableDataType<Ingredient> INGREDIENT = new SerializableDataType<>(
-        Ingredient.class,
-        (buffer, ingredient) -> ingredient.write(buffer),
-        Ingredient::fromPacket,
+        ClassUtil.castClass(Ingredient.class),
+        Ingredient.PACKET_CODEC::encode,
+        Ingredient.PACKET_CODEC::decode,
         jsonElement -> {
             List<Ingredient.Entry> entries = INGREDIENT_ENTRIES.read(jsonElement);
             return Ingredient.ofEntries(entries.stream());
@@ -366,23 +412,22 @@ public final class SerializableDataTypes {
         ingredient -> {
             List<Ingredient.Entry> entries = Arrays.asList(((IngredientAccessor) ingredient).getEntries());
             return INGREDIENT_ENTRIES.write(entries);
-        });
+        }
+    );
 
     // The regular vanilla Minecraft ingredient.
     public static final SerializableDataType<Ingredient> VANILLA_INGREDIENT = new SerializableDataType<>(
-        Ingredient.class,
-        (buf, ingredient) ->
-            ingredient.write(buf),
-        Ingredient::fromPacket,
+        ClassUtil.castClass(Ingredient.class),
+        Ingredient.PACKET_CODEC::encode,
+        Ingredient.PACKET_CODEC::decode,
         jsonElement -> Ingredient.DISALLOW_EMPTY_CODEC
-            .decode(JsonOps.INSTANCE, jsonElement)
+            .parse(JsonOps.INSTANCE, jsonElement)
             .mapError(err -> "Couldn't deserialize ingredient from JSON: " + err)
-            .getOrThrow(false, err -> {})
-            .getFirst(),
+            .getOrThrow(),
         ingredient -> Ingredient.DISALLOW_EMPTY_CODEC
             .encodeStart(JsonOps.INSTANCE, ingredient)
             .mapError(err -> "Couldn't serialize ingredient to JSON: " + err)
-            .getOrThrow(false, err -> {})
+            .getOrThrow()
     );
 
     public static final SerializableDataType<Block> BLOCK = SerializableDataType.registry(Block.class, Registries.BLOCK);
@@ -399,14 +444,12 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<RegistryKey<DamageType>> DAMAGE_TYPE = SerializableDataType.registryKey(RegistryKeys.DAMAGE_TYPE);
 
-    public static final SerializableDataType<EntityGroup> ENTITY_GROUP =
-        SerializableDataType.mapped(EntityGroup.class, HashBiMap.create(ImmutableMap.of(
-            "default", EntityGroup.DEFAULT,
-            "undead", EntityGroup.UNDEAD,
-            "arthropod", EntityGroup.ARTHROPOD,
-            "illager", EntityGroup.ILLAGER,
-            "aquatic", EntityGroup.AQUATIC
-        )));
+    public static final SerializableDataType<TagKey<EntityType<?>>> ENTITY_GROUP_TAG = SerializableDataType.mapped(ClassUtil.castClass(TagKey.class), HashBiMap.create(ImmutableMap.of(
+        "undead", EntityTypeTags.UNDEAD,
+        "arthropod", EntityTypeTags.ARTHROPOD,
+        "illager", EntityTypeTags.ILLAGER,
+        "aquatic", EntityTypeTags.AQUATIC
+    )));
 
     public static final SerializableDataType<EquipmentSlot> EQUIPMENT_SLOT = SerializableDataType.enumValue(EquipmentSlot.class);
 
@@ -421,85 +464,115 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<ParticleType<?>> PARTICLE_TYPE = SerializableDataType.registry(ClassUtil.castClass(ParticleType.class), Registries.PARTICLE_TYPE);
 
-    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT = SerializableDataType.compound(ParticleEffect.class,
+    public static final PacketCodec<ByteBuf, NbtCompound> UNLIMITED_NBT_COMPOUND_PACKET_CODEC = PacketCodecs.nbtCompound(NbtSizeTracker::ofUnlimitedBytes);
+
+    public static final SerializableDataType<NbtCompound> NBT = new SerializableDataType<>(
+        ClassUtil.castClass(NbtCompound.class),
+        UNLIMITED_NBT_COMPOUND_PACKET_CODEC::encode,
+        UNLIMITED_NBT_COMPOUND_PACKET_CODEC::decode,
+        jsonElement -> Codec.withAlternative(NbtCompound.CODEC, StringNbtReader.NBT_COMPOUND_CODEC)
+            .parse(JsonOps.INSTANCE, jsonElement)
+            .getOrThrow(),
+        nbtCompound -> NbtCompound.CODEC
+            .encodeStart(JsonOps.INSTANCE, nbtCompound)
+            .mapError(err -> "Couldn't serialize NBT compound to JSON (skipping): " + err)
+            .resultOrPartial(Calio.LOGGER::warn)
+            .orElseGet(JsonObject::new)
+    );
+
+    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT = SerializableDataType.compound(
+        ClassUtil.castClass(ParticleEffect.class),
         new SerializableData()
             .add("type", PARTICLE_TYPE)
-            .add("params", STRING, ""),
-        dataInstance -> {
-            ParticleType<? extends ParticleEffect> particleType = dataInstance.get("type");
-            ParticleEffect.Factory factory = particleType.getParametersFactory();
-            ParticleEffect effect = null;
-            try {
-                effect = factory.read(particleType, new StringReader(" " + dataInstance.getString("params")));
-            } catch (CommandSyntaxException e) {
-                throw new RuntimeException(e);
+            .add("params", NBT, null),
+        data -> {
+
+            ParticleType<? extends ParticleEffect> particleType = data.get("type");
+            NbtCompound paramsNbt = data.get("params");
+
+            Identifier particleTypeId = Objects.requireNonNull(Registries.PARTICLE_TYPE.getId(particleType));
+            if (particleType instanceof SimpleParticleType simpleType) {
+                return simpleType;
             }
-            return effect;
+
+            else if (paramsNbt == null || paramsNbt.isEmpty()) {
+                throw new JsonSyntaxException("Expected parameters for particle effect \"" + particleTypeId + "\"");
+            }
+
+            else {
+                paramsNbt.putString("type", particleTypeId.toString());
+                return ParticleTypes.TYPE_CODEC
+                    .parse(NbtOps.INSTANCE, paramsNbt)
+                    .getOrThrow();
+            }
+
         },
-        ((serializableData, particleEffect) -> {
+        (serializableData, particleEffect) -> {
+
             SerializableData.Instance data = serializableData.new Instance();
-            data.set("type", particleEffect.getType());
-            String params = particleEffect.asString();
-            int spaceIndex = params.indexOf(' ');
-            if(spaceIndex > -1) {
-                params = params.substring(spaceIndex + 1);
-            } else {
-                params = "";
-            }
-            data.set("params", params);
+            ParticleType<?> particleType = particleEffect.getType();
+
+            data.set("type", particleType);
+            data.set("params", ParticleTypes.TYPE_CODEC
+                .encodeStart(NbtOps.INSTANCE, particleEffect)
+                .getOrThrow());
+
             return data;
-        }));
+
+        }
+    );
 
     public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = new SerializableDataType<>(ParticleEffect.class,
         PARTICLE_EFFECT::send,
         PARTICLE_EFFECT::receive,
         jsonElement -> {
-            if(jsonElement.isJsonPrimitive() && jsonElement.getAsJsonPrimitive().isString()) {
-                ParticleType<?> type = PARTICLE_TYPE.read(jsonElement);
-                if(type instanceof ParticleEffect) {
-                    return (ParticleEffect) type;
+
+            if (jsonElement instanceof JsonPrimitive jsonPrimitive && jsonPrimitive.isString()) {
+
+                ParticleType<?> particleType = PARTICLE_TYPE.read(jsonPrimitive);
+
+                if (particleType instanceof SimpleParticleType simpleParticleType) {
+                    return simpleParticleType;
                 }
-                throw new RuntimeException("Expected either a string with a parameter-less particle effect, or an object.");
-            } else if(jsonElement.isJsonObject()) {
-                return PARTICLE_EFFECT.read(jsonElement);
+
             }
-            throw new RuntimeException("Expected either a string with a parameter-less particle effect, or an object.");
+
+            else if (jsonElement instanceof JsonObject jsonObject) {
+                return PARTICLE_EFFECT.read(jsonObject);
+            }
+
+            throw new IllegalArgumentException("Expected either a string with parameter-less particle effect, or a JSON object");
+
         },
         PARTICLE_EFFECT::write);
 
-    public static final SerializableDataType<NbtCompound> NBT = new SerializableDataType<>(
-        NbtCompound.class,
-        PacketByteBuf::writeNbt,
-        PacketByteBuf::readNbt,
-        jsonElement -> {
-
-            if (!(jsonElement.isJsonObject()|| jsonElement.isJsonPrimitive() && jsonElement.getAsJsonPrimitive().isString()))
-                throw new JsonSyntaxException("Expected either a string or an object.");
-
-            try {
-                String stringifiedJsonElement = jsonElement.isJsonObject() ? jsonElement.getAsJsonObject().toString() : jsonElement.getAsJsonPrimitive().getAsString();
-                return new StringNbtReader(new StringReader(stringifiedJsonElement)).parseCompound();
-            }
-            catch (CommandSyntaxException e) {
-                throw new JsonSyntaxException("Could not parse NBT: " + e.getMessage());
-            }
-
-        },
-        nbtCompound -> NbtOps.INSTANCE.convertTo(JsonOps.INSTANCE, nbtCompound)
+    public static final SerializableDataType<ComponentChanges> COMPONENT_CHANGES = new SerializableDataType<>(
+        ClassUtil.castClass(ComponentChanges.class),
+        ComponentChanges.PACKET_CODEC::encode,
+        ComponentChanges.PACKET_CODEC::decode,
+        jsonElement -> ComponentChanges.CODEC
+            .parse(JsonOps.INSTANCE, jsonElement)
+            .getOrThrow(JsonParseException::new),
+        componentChanges -> ComponentChanges.CODEC
+            .encodeStart(JsonOps.INSTANCE, componentChanges)
+            .mapError(err -> "Failed to serialize component changes to JSON (skipping): " + err)
+            .resultOrPartial(Calio.LOGGER::warn)
+            .orElseGet(JsonObject::new)
     );
 
     public static final SerializableDataType<ItemStack> ITEM_STACK = SerializableDataType.compound(
         ItemStack.class,
         new SerializableData()
-            .add("item", SerializableDataTypes.ITEM)
-            .add("amount", SerializableDataTypes.INT, 1)
-            .add("tag", SerializableDataTypes.NBT, null),
+            .add("item", ITEM)
+            .add("amount", INT, 1)
+            .add("components", COMPONENT_CHANGES, ComponentChanges.EMPTY),
         data -> {
 
-            ItemStack stack = data.<Item>get("item").getDefaultStack();
+            Item item = data.get("item");
+            ItemStack stack = item.getDefaultStack();
 
-            stack.setCount(data.get("amount"));
-            data.ifPresent("tag", stack::setNbt);
+            stack.setCount(data.getInt("amount"));
+            stack.applyChanges(data.get("components"));
 
             return stack;
 
@@ -510,7 +583,7 @@ public final class SerializableDataTypes {
 
             data.set("item", stack.getItem());
             data.set("amount", stack.getCount());
-            data.set("tag", stack.getNbt());
+            data.set("components", stack.getComponentChanges());
 
             return data;
 
@@ -521,10 +594,14 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<Text> TEXT = new SerializableDataType<>(
         Text.class,
-        PacketByteBuf::writeText,
-        PacketByteBuf::readUnlimitedText,
-        Text.Serialization::fromJsonTree,
-        Text.Serialization::toJsonTree
+        TextCodecs.UNLIMITED_REGISTRY_PACKET_CODEC::encode,
+        TextCodecs.UNLIMITED_REGISTRY_PACKET_CODEC::decode,
+        jsonElement -> TextCodecs.CODEC
+            .parse(JsonOps.INSTANCE, jsonElement)
+            .getOrThrow(JsonParseException::new),
+        text -> TextCodecs.CODEC
+            .encodeStart(JsonOps.INSTANCE, text)
+            .getOrThrow(JsonParseException::new)
     );
 
     public static final SerializableDataType<List<Text>> TEXTS = SerializableDataType.list(TEXT);
@@ -533,7 +610,9 @@ public final class SerializableDataTypes {
         ClassUtil.castClass(RecipeEntry.class),
         (buf, recipeEntry) -> {
 
-            NbtElement recipeNbt = Util.getResult(Recipe.CODEC.encodeStart(NbtOps.INSTANCE, recipeEntry.value()), NbtException::new);
+            NbtElement recipeNbt = Recipe.CODEC
+                .encodeStart(NbtOps.INSTANCE, recipeEntry.value())
+                .getOrThrow(NbtException::new);
 
             buf.writeIdentifier(recipeEntry.id());
             buf.writeNbt(recipeNbt);
@@ -542,7 +621,9 @@ public final class SerializableDataTypes {
         buf -> {
 
             Identifier id = buf.readIdentifier();
-            Recipe<?> recipe = Util.getResult(Recipe.CODEC.parse(NbtOps.INSTANCE, buf.readNbt(NbtSizeTracker.ofUnlimitedBytes())), NbtException::new);
+            Recipe<?> recipe = Recipe.CODEC
+                .parse(NbtOps.INSTANCE, buf.readNbt(NbtSizeTracker.ofUnlimitedBytes()))
+                .getOrThrow(NbtException::new);
 
             return new RecipeEntry<>(id, recipe);
 
@@ -554,7 +635,9 @@ public final class SerializableDataTypes {
             }
 
             Identifier id = IDENTIFIER.read(JsonHelper.getElement(jsonObject, "id"));
-            Recipe<?> recipe = Util.getResult(Recipe.CODEC.parse(JsonOps.INSTANCE, jsonObject), JsonParseException::new);
+            Recipe<?> recipe = Recipe.CODEC
+                .parse(JsonOps.INSTANCE, jsonObject)
+                .getOrThrow(JsonParseException::new);
 
             return new RecipeEntry<>(id, recipe);
 
@@ -576,8 +659,11 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<GameEvent> GAME_EVENT = SerializableDataType.registry(GameEvent.class, Registries.GAME_EVENT);
 
-    public static final SerializableDataType<List<GameEvent>> GAME_EVENTS =
-        SerializableDataType.list(GAME_EVENT);
+    public static final SerializableDataType<List<GameEvent>> GAME_EVENTS = SerializableDataType.list(GAME_EVENT);
+
+    public static final SerializableDataType<RegistryEntry<GameEvent>> GAME_EVENT_ENTRY = SerializableDataType.registryEntry(Registries.GAME_EVENT);
+
+    public static final SerializableDataType<List<RegistryEntry<GameEvent>>> GAME_EVENT_ENTRIES = SerializableDataType.list(GAME_EVENT_ENTRY);
 
     public static final SerializableDataType<TagKey<GameEvent>> GAME_EVENT_TAG = SerializableDataType.tag(RegistryKeys.GAME_EVENT);
 
@@ -614,55 +700,77 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<StatusEffectChance>> STATUS_EFFECT_CHANCES = SerializableDataType.list(STATUS_EFFECT_CHANCE);
 
-    public static final SerializableDataType<FoodComponent> FOOD_COMPONENT = SerializableDataType.compound(FoodComponent.class, new SerializableData()
+    public static final SerializableDataType<FoodComponent.StatusEffectEntry> FOOD_STATUS_EFFECT_ENTRY = new SerializableDataType<>(
+        ClassUtil.castClass(FoodComponent.StatusEffectEntry.class),
+        FoodComponent.StatusEffectEntry.PACKET_CODEC::encode,
+        FoodComponent.StatusEffectEntry.PACKET_CODEC::decode,
+        jsonElement -> FoodComponent.StatusEffectEntry.CODEC
+            .parse(JsonOps.INSTANCE, jsonElement)
+            .getOrThrow(JsonParseException::new),
+        statusEffectEntry -> FoodComponent.StatusEffectEntry.CODEC
+            .encodeStart(JsonOps.INSTANCE, statusEffectEntry)
+            .mapError(err -> "Failed to serialize status effect entry to JSON (skipping): " + err)
+            .resultOrPartial(Calio.LOGGER::warn)
+            .orElseGet(JsonObject::new)
+    );
+
+    public static final SerializableDataType<List<FoodComponent.StatusEffectEntry>> FOOD_STATUS_EFFECT_ENTRIES = SerializableDataType.list(FOOD_STATUS_EFFECT_ENTRY);
+
+    public static final SerializableDataType<FoodComponent> FOOD_COMPONENT = SerializableDataType.compound(
+        ClassUtil.castClass(FoodComponent.class),
+        new SerializableData()
             .add("hunger", INT)
             .add("saturation", FLOAT)
-            .add("meat", BOOLEAN, false)
             .add("always_edible", BOOLEAN, false)
             .add("snack", BOOLEAN, false)
-            .add("effect", STATUS_EFFECT_CHANCE, null)
-            .add("effects", STATUS_EFFECT_CHANCES, null),
-        (data) -> {
-            FoodComponent.Builder builder = new FoodComponent.Builder().hunger(data.getInt("hunger")).saturationModifier(data.getFloat("saturation"));
-            if (data.getBoolean("meat")) {
-                builder.meat();
-            }
+            .add("effect", FOOD_STATUS_EFFECT_ENTRY, null)
+            .add("effects", FOOD_STATUS_EFFECT_ENTRIES, null)
+            .add("using_converts_to", ITEM_STACK, null),
+        data -> {
+
+            FoodComponent.Builder builder = new FoodComponent.Builder()
+                .nutrition(data.getInt("hunger"))
+                .saturationModifier(data.getFloat("saturation"));
+
             if (data.getBoolean("always_edible")) {
                 builder.alwaysEdible();
             }
+
             if (data.getBoolean("snack")) {
                 builder.snack();
             }
-            data.<StatusEffectChance>ifPresent("effect", sec -> {
-                builder.statusEffect(sec.statusEffectInstance, sec.chance);
-            });
-            data.<List<StatusEffectChance>>ifPresent("effects", secs -> secs.forEach(sec -> {
-                builder.statusEffect(sec.statusEffectInstance, sec.chance);
-            }));
-            return builder.build();
-        },
-        (data, fc) -> {
-            SerializableData.Instance inst = data.new Instance();
-            inst.set("hunger", fc.getHunger());
-            inst.set("saturation", fc.getSaturationModifier());
-            inst.set("meat", fc.isMeat());
-            inst.set("always_edible", fc.isAlwaysEdible());
-            inst.set("snack", fc.isSnack());
-            inst.set("effect", null);
-            List<StatusEffectChance> statusEffectChances = new LinkedList<>();
-            fc.getStatusEffects().forEach(pair -> {
-                StatusEffectChance sec = new StatusEffectChance();
-                sec.statusEffectInstance = pair.getFirst();
-                sec.chance = pair.getSecond();
-                statusEffectChances.add(sec);
-            });
-            if(statusEffectChances.size() > 0) {
-                inst.set("effects", statusEffectChances);
-            } else {
-                inst.set("effects", null);
+
+            data.<FoodComponent.StatusEffectEntry>ifPresent("effect", effectEntry ->
+                builder.statusEffect(effectEntry.effect(), effectEntry.probability())
+            );
+
+            data.<List<FoodComponent.StatusEffectEntry>>ifPresent("effects", effectEntries -> effectEntries.forEach(effectEntry ->
+                builder.statusEffect(effectEntry.effect(), effectEntry.probability())
+            ));
+
+            if (data.isPresent("using_converts_to")) {
+                builder.usingConvertsTo = Optional.of(data.get("using_converts_to"));
             }
-            return inst;
-        });
+
+            return builder.build();
+
+        },
+        (serializableData, foodComponent) -> {
+
+            SerializableData.Instance data = serializableData.new Instance();
+
+            data.set("hunger", foodComponent.nutrition());
+            data.set("saturation", foodComponent.saturation());
+            data.set("always_edible", foodComponent.canAlwaysEat());
+            data.set("snack", foodComponent.getEatTicks() == 16);
+            data.set("effect", null);
+            data.set("effects", foodComponent.effects());
+            data.set("using_converts_to", foodComponent.usingConvertsTo().orElse(null));
+
+            return data;
+
+        }
+    );
 
     public static final SerializableDataType<Direction> DIRECTION = SerializableDataType.enumValue(Direction.class);
 
@@ -695,28 +803,41 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<RaycastContext.FluidHandling> RAYCAST_FLUID_HANDLING = SerializableDataType.enumValue(RaycastContext.FluidHandling.class);
 
-    public static final SerializableDataType<Stat<?>> STAT = SerializableDataType.compound(ClassUtil.castClass(Stat.class),
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    public static final SerializableDataType<Stat<?>> STAT = SerializableDataType.compound(
+        ClassUtil.castClass(Stat.class),
         new SerializableData()
             .add("type", SerializableDataType.registry(ClassUtil.castClass(StatType.class), Registries.STAT_TYPE))
-            .add("id", SerializableDataTypes.IDENTIFIER),
+            .add("id", IDENTIFIER),
         data -> {
+
             StatType statType = data.get("type");
-            Registry<?> statRegistry = statType.getRegistry();
             Identifier statId = data.get("id");
-            if(statRegistry.containsId(statId)) {
-                Object statObject = statRegistry.get(statId);
-                return statType.getOrCreateStat(statObject);
+
+            Registry statRegistry = statType.getRegistry();
+            if (statRegistry.containsId(statId)) {
+                return statType.getOrCreateStat(statRegistry.get(statId));
             }
-            throw new IllegalArgumentException("Desired stat \"" + statId + "\" does not exist in stat type ");
+
+            else {
+                throw new IllegalArgumentException("Desired stat \"" + statId + "\" does not exist in stat type \"" + Registries.STAT_TYPE.getId(statType) + "\"");
+            }
+
         },
-        (data, stat) -> {
-            SerializableData.Instance inst = data.new Instance();
-            inst.set("type", stat.getType());
-            Registry reg = stat.getType().getRegistry();
-            Identifier statId = reg.getId(stat.getValue());
-            inst.set("id", statId);
-            return inst;
-        });
+        (serializableData, stat) -> {
+
+            SerializableData.Instance data = serializableData.new Instance();
+
+            StatType statType = stat.getType();
+            Optional<Identifier> statId = Optional.ofNullable(statType.getRegistry().getId(stat.getValue()));
+
+            data.set("type", statType);
+            statId.ifPresent(id -> data.set("id", id));
+
+            return data;
+
+        }
+    );
 
     public static final SerializableDataType<TagKey<Biome>> BIOME_TAG = SerializableDataType.tag(RegistryKeys.BIOME);
 
@@ -725,4 +846,23 @@ public final class SerializableDataTypes {
     public static final SerializableDataType<TagLike<Block>> BLOCK_TAG_LIKE = SerializableDataType.tagLike(Registries.BLOCK);
 
     public static final SerializableDataType<TagLike<EntityType<?>>> ENTITY_TYPE_TAG_LIKE = SerializableDataType.tagLike(Registries.ENTITY_TYPE);
+
+    public static final SerializableDataType<PotionContentsComponent> POTION_CONTENTS_COMPONENT = new SerializableDataType<>(
+        ClassUtil.castClass(PotionContentsComponent.class),
+        PotionContentsComponent.PACKET_CODEC::encode,
+        PotionContentsComponent.PACKET_CODEC::decode,
+        jsonElement -> PotionContentsComponent.CODEC
+            .parse(JsonOps.INSTANCE, jsonElement)
+            .getOrThrow(JsonParseException::new),
+        potionContentsComponent -> PotionContentsComponent.CODEC
+            .encodeStart(JsonOps.INSTANCE, potionContentsComponent)
+            .mapError(err -> "Couldn't serialize potion content components to JSON (skipping): " + err)
+            .result()
+            .orElseGet(JsonObject::new)
+    );
+
+    public static final SerializableDataType<RegistryKey<LootFunction>> ITEM_MODIFIER = SerializableDataType.registryKey(RegistryKeys.ITEM_MODIFIER);
+
+    public static final SerializableDataType<RegistryKey<LootCondition>> PREDICATE = SerializableDataType.registryKey(RegistryKeys.PREDICATE);
+
 }

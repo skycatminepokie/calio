@@ -47,7 +47,7 @@ public interface IExtendedJsonDataLoader {
 
     default Identifier trim(Identifier fileId, String directoryName) {
         String path = FilenameUtils.removeExtension(fileId.getPath()).substring(directoryName.length() + 1);
-        return new Identifier(fileId.getNamespace(), path);
+        return Identifier.of(fileId.getNamespace(), path);
     }
 
     default boolean hasValidFormat(Identifier fileId) {

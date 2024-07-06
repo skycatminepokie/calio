@@ -4,11 +4,10 @@ import com.google.common.collect.ImmutableSet;
 import com.google.gson.*;
 import io.github.apace100.calio.ClassUtil;
 import io.github.apace100.calio.data.*;
-import io.github.apace100.calio.network.CalioNetworking;
-import io.netty.buffer.Unpooled;
+import io.github.apace100.calio.network.packet.s2c.SyncDataObjectRegistryS2CPacket;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.resource.IdentifiableResourceReloadListener;
-import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -17,6 +16,7 @@ import net.minecraft.util.InvalidIdentifierException;
 import net.minecraft.util.JsonHelper;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.logging.log4j.util.TriConsumer;
+import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -102,7 +102,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         register(id, entry);
     }
 
-    public void write(PacketByteBuf buf) {
+    public void send(RegistryByteBuf buf) {
         buf.writeInt(idToEntry.size() - staticEntries.size());
         for(Map.Entry<Identifier, T> entry : idToEntry.entrySet()) {
             if(staticEntries.containsKey(entry.getKey())) {
@@ -116,18 +116,19 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         }
     }
 
-    public void sendDataObject(PacketByteBuf buf, T t) {
+    public void sendDataObject(RegistryByteBuf buf, T t) {
         DataObjectFactory<T> factory = t.getFactory();
         buf.writeIdentifier(factoryToId.get(factory));
         SerializableData.Instance data = factory.toData(t);
         factory.getData().write(buf, data);
     }
 
-    public void receive(PacketByteBuf buf) {
+    public DataObjectRegistry<T> receive(RegistryByteBuf buf) {
         receive(buf, Runnable::run);
+        return this;
     }
 
-    public void receive(PacketByteBuf buf, Consumer<Runnable> scheduler) {
+    public void receive(RegistryByteBuf buf, Consumer<Runnable> scheduler) {
         int entryCount = buf.readInt();
         HashMap<Identifier, T> entries = new HashMap<>(entryCount);
         for(int i = 0; i < entryCount; i++) {
@@ -141,7 +142,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         });
     }
 
-    public T receiveDataObject(PacketByteBuf buf) {
+    public T receiveDataObject(RegistryByteBuf buf) {
         Identifier factoryId = buf.readIdentifier();
         DataObjectFactory<T> factory = getFactory(factoryId);
         SerializableData.Instance data = factory.getData().read(buf);
@@ -169,7 +170,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
             String type = JsonHelper.getString(jsonObject, factoryFieldName);
             Identifier factoryId = null;
             try {
-                factoryId = new Identifier(type);
+                factoryId = Identifier.of(type);
             } catch (InvalidIdentifierException e) {
                 throw new JsonParseException(
                     "Could not read data object of type \"" + registryId +
@@ -189,10 +190,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     }
 
     public void sync(ServerPlayerEntity player) {
-        PacketByteBuf buf = new PacketByteBuf(Unpooled.buffer());
-        buf.writeIdentifier(registryId);
-        write(buf);
-        ServerPlayNetworking.send(player, CalioNetworking.SYNC_DATA_OBJECT_REGISTRY, buf);
+        ServerPlayNetworking.send(player, new SyncDataObjectRegistryS2CPacket(this));
     }
 
     public void clear() {
@@ -271,6 +269,11 @@ public class DataObjectRegistry<T extends DataObject<T>> {
 
     public static DataObjectRegistry<?> getRegistry(Identifier registryId) {
         return REGISTRIES.get(registryId);
+    }
+
+    @ApiStatus.Internal
+    public static void updateRegistry(DataObjectRegistry<?> registry) {
+        REGISTRIES.put(registry.getRegistryId(), registry);
     }
 
     public static void performAutoSync(ServerPlayerEntity player) {
