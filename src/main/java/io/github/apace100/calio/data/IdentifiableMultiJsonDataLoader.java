@@ -10,6 +10,7 @@ import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Unit;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
 import org.jetbrains.annotations.Nullable;
@@ -112,7 +113,7 @@ public abstract class IdentifiableMultiJsonDataLoader extends ExtendedSinglePrep
                 while (jsonIterator.hasNext()) {
 
                     JsonElement json = jsonIterator.next();
-                    if (!(json instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get())) {
+                    if (!(json instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get(Unit.INSTANCE))) {
                         continue;
                     }
 

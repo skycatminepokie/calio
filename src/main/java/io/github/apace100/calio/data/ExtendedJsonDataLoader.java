@@ -8,6 +8,7 @@ import io.github.apace100.calio.Calio;
 import net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Unit;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
 import org.quiltmc.parsers.json.JsonFormat;
@@ -81,7 +82,7 @@ public abstract class ExtendedJsonDataLoader extends ExtendedSinglePreparationRe
             Identifier id = preparedEntry.getKey();
             JsonElement jsonElement = preparedEntry.getValue();
 
-            if (!(jsonElement instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get())) {
+            if (!(jsonElement instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get(Unit.INSTANCE))) {
                 continue;
             }
 

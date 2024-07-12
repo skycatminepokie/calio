@@ -5,6 +5,7 @@ import io.github.apace100.calio.resource.condition.AllNamespacesLoadedResourceCo
 import io.github.apace100.calio.resource.condition.AnyNamespaceLoadedResourceCondition;
 import net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditionType;
 import net.fabricmc.fabric.api.resource.conditions.v1.ResourceConditions;
+import net.minecraft.util.Unit;
 
 import java.util.List;
 import java.util.Set;
@@ -23,7 +24,7 @@ public class CalioResourceConditions {
 
     public static boolean namespacesLoaded(List<String> namespaces, boolean and) {
 
-        Set<String> loadedNamespaces = Calio.LOADED_NAMESPACES.get();
+        Set<String> loadedNamespaces = Calio.LOADED_NAMESPACES.get(Unit.INSTANCE);
         if (loadedNamespaces == null) {
             Calio.LOGGER.warn("Failed to retrieve loaded namespaces!");
             return false;

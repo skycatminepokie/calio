@@ -13,6 +13,7 @@ import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Unit;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.ApiStatus;
@@ -20,6 +21,7 @@ import org.jetbrains.annotations.ApiStatus;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Calio implements ModInitializer {
 
@@ -27,9 +29,9 @@ public class Calio implements ModInitializer {
 	public static final String MOD_NAMESPACE = "calio";
 
 	@ApiStatus.Internal
-	public static final ThreadLocal<Set<String>> LOADED_NAMESPACES = new ThreadLocal<>();
+	public static final Map<Unit, Set<String>> LOADED_NAMESPACES = new ConcurrentHashMap<>();
 	@ApiStatus.Internal
-	public static final ThreadLocal<DynamicRegistryManager> DYNAMIC_REGISTRIES = new ThreadLocal<>();
+	public static final Map<Unit, DynamicRegistryManager> DYNAMIC_REGISTRIES = new ConcurrentHashMap<>();
 	@ApiStatus.Internal
 	public static final ThreadLocal<Map<TagKey<?>, Collection<RegistryEntry<?>>>> REGISTRY_TAGS = new ThreadLocal<>();
 

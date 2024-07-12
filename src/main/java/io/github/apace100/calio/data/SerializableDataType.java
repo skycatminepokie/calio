@@ -22,6 +22,7 @@ import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.JsonHelper;
+import net.minecraft.util.Unit;
 import net.minecraft.util.collection.WeightedList;
 import org.jetbrains.annotations.Nullable;
 
@@ -399,7 +400,7 @@ public class SerializableDataType<T> {
             id -> {
 
                 RegistryKey<T> registryKey = RegistryKey.of(registryRef, id);
-                DynamicRegistryManager dynamicRegistries = Calio.DYNAMIC_REGISTRIES.get();
+                DynamicRegistryManager dynamicRegistries = Calio.DYNAMIC_REGISTRIES.get(Unit.INSTANCE);
 
                 if (dynamicRegistries == null || exemptions.contains(registryKey)) {
                     return registryKey;
