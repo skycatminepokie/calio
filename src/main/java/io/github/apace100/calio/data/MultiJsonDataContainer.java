@@ -4,20 +4,25 @@ import com.google.gson.JsonElement;
 import net.minecraft.util.Identifier;
 
 import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.Set;
 
-public class MultiJsonDataContainer extends LinkedHashMap<String, Map<Identifier, List<JsonElement>>> {
+public class MultiJsonDataContainer extends LinkedHashMap<Identifier, Set<MultiJsonDataContainer.Entry>> {
 
     public void forEach(Processor processor) {
-        this.forEach((packName, idAndData) ->
-            idAndData.forEach((id, data) ->
-                data.forEach(jsonElement -> processor.process(packName, id, jsonElement))));
+        this.forEach((id, entries) -> entries.forEach(entry -> processor.process(entry.source(), id, entry.jsonData())));
+    }
+
+    public static Entry entry(String source, JsonElement jsonData) {
+        return new Entry(source, jsonData);
     }
 
     @FunctionalInterface
     public interface Processor {
         void process(String packName, Identifier id, JsonElement jsonElement);
+    }
+
+    public record Entry(String source, JsonElement jsonData) {
+
     }
 
 }

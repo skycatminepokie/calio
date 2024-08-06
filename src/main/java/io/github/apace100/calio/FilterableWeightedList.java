@@ -7,6 +7,7 @@ import java.util.Random;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
+@Deprecated(forRemoval = true)
 public class FilterableWeightedList<U> extends WeightedList<U> {
 
     private Predicate<U> filter;

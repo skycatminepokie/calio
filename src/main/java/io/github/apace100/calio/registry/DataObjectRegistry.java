@@ -2,7 +2,8 @@ package io.github.apace100.calio.registry;
 
 import com.google.common.collect.ImmutableSet;
 import com.google.gson.*;
-import io.github.apace100.calio.ClassUtil;
+import com.mojang.serialization.*;
+import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.data.*;
 import io.github.apace100.calio.network.packet.s2c.SyncDataObjectRegistryS2CPacket;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
@@ -120,7 +121,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         DataObjectFactory<T> factory = t.getFactory();
         buf.writeIdentifier(factoryToId.get(factory));
         SerializableData.Instance data = factory.toData(t);
-        factory.getData().write(buf, data);
+        factory.getData().send(buf, data);
     }
 
     public DataObjectRegistry<T> receive(RegistryByteBuf buf) {
@@ -145,12 +146,15 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     public T receiveDataObject(RegistryByteBuf buf) {
         Identifier factoryId = buf.readIdentifier();
         DataObjectFactory<T> factory = getFactory(factoryId);
-        SerializableData.Instance data = factory.getData().read(buf);
+        SerializableData.Instance data = factory.getData().receive(buf);
         return factory.fromData(data);
     }
 
     public JsonElement writeDataObject(T t) {
-        return t.getFactory().getData().write(t.getFactory().toData(t));
+        return t.getFactory().getData().codec()
+            .encodeStart(JsonOps.INSTANCE, t.getFactory().toData(t))
+            .resultOrPartial(Calio.LOGGER::warn)
+            .orElseGet(JsonObject::new);
     }
 
     public T readDataObject(JsonElement element) {
@@ -185,8 +189,10 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         } else {
             factory = defaultFactory;
         }
-        SerializableData.Instance data = factory.getData().read(jsonObject);
+
+        SerializableData.Instance data = factory.getData().fromJson(jsonObject);
         return factory.fromData(data);
+
     }
 
     public void sync(ServerPlayerEntity player) {
@@ -249,22 +255,26 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     }
 
     private SerializableDataType<Supplier<T>> createLazyDataType() {
-        return SerializableDataType.wrap(ClassUtil.castClass(Supplier.class),
-            SerializableDataTypes.IDENTIFIER, lazy -> getId(lazy.get()), id -> () -> get(id));
+        return SerializableDataTypes.IDENTIFIER.xmap(
+            id -> () -> get(id),
+            lazy -> getId(lazy.get())
+        );
     }
 
     private SerializableDataType<T> createDataType() {
-        return new SerializableDataType<>(
-            ClassUtil.castClass(objectClass),
+        return SerializableDataType.jsonBacked(
             this::sendDataObject,
             this::receiveDataObject,
-            this::readDataObject,
-            this::writeDataObject
+            this::writeDataObject,
+            this::readDataObject
         );
     }
 
     private SerializableDataType<T> createRegistryDataType() {
-        return SerializableDataType.wrap(objectClass, SerializableDataTypes.IDENTIFIER, this::getId, this::get);
+        return SerializableDataTypes.IDENTIFIER.xmap(
+            this::get,
+            this::getId
+        );
     }
 
     public static DataObjectRegistry<?> getRegistry(Identifier registryId) {

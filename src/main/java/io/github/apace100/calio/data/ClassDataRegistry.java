@@ -1,5 +1,6 @@
 package io.github.apace100.calio.data;
 
+import com.mojang.serialization.DataResult;
 import io.github.apace100.calio.ClassUtil;
 
 import java.util.HashMap;
@@ -79,18 +80,22 @@ public class ClassDataRegistry<T> {
     }
 
     private SerializableDataType<Class<? extends T>> createDataType() {
-        return SerializableDataType.wrap(ClassUtil.castClass(Class.class), SerializableDataTypes.STRING,
-            Class::getName, str -> {
+        return SerializableDataTypes.STRING.comapFlatMap(
+            str -> {
+
                 StringBuilder failedClasses = new StringBuilder();
-                Optional<Class<? extends T>> optionalClass = mapStringToClass(str, failedClasses);
-                if(optionalClass.isPresent()) {
-                    return optionalClass.get();
-                }
-                throw new RuntimeException("Specified class does not exist: \"" + str + "\". Looked at [" + failedClasses + "]");
-            });
+                Optional<Class<? extends T>> mappedClass = mapStringToClass(str, failedClasses);
+
+                return mappedClass.isPresent()
+                    ? DataResult.success(mappedClass.get())
+                    : DataResult.error(() -> "Specified class does not exist: \"" + str + "\". Searched at [" + failedClasses + "]");
+
+            },
+            Class::getName
+        );
     }
 
-    public static Optional<ClassDataRegistry> get(Class<?> cls) {
+    public static Optional<ClassDataRegistry<?>> get(Class<?> cls) {
         if(REGISTRIES.containsKey(cls)) {
             return Optional.of(REGISTRIES.get(cls));
         } else {

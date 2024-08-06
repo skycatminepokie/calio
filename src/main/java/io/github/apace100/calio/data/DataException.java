@@ -1,33 +1,49 @@
 package io.github.apace100.calio.data;
 
-import java.util.Locale;
-
 public class DataException extends RuntimeException {
 
-    private Phase phase;
-    private String path;
-    private Exception exception;
+    private final Phase phase;
 
-    public DataException(Phase phase, String path, Exception exception) {
-        super("Error " + phase.name().toLowerCase(Locale.ROOT) + " data field");
+    private final String path;
+    private final String exceptionMessage;
+
+    public DataException(Phase phase, String path, String exceptionMessage) {
+        super("Error " + phase + " data field");
         this.phase = phase;
         this.path = path;
-        this.exception = exception;
+        this.exceptionMessage = exceptionMessage;
+    }
+
+    public DataException(Phase phase, String path, Exception exception) {
+        this(phase, path, exception.getMessage());
     }
 
     public DataException prepend(String path) {
-        this.path = path + "." + this.path;
-        return this;
+        return new DataException(this.phase, path + "." + this.path, this.exceptionMessage);
     }
 
     @Override
     public String getMessage() {
-        return super.getMessage() + " at " + path + ": " + exception.getMessage();
+        return super.getMessage() + " at " + path + ": " + exceptionMessage;
     }
 
     public enum Phase {
-        READING,
-        RECEIVING,
-        WRITING
+
+        READING("decoding"),
+        WRITING("encoding"),
+        SENDING("sending"),
+        RECEIVING("receiving");
+
+        final String name;
+        Phase(String name) {
+            this.name = name;
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+
     }
+
 }

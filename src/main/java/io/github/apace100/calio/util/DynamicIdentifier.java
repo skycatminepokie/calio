@@ -1,6 +1,7 @@
 package io.github.apace100.calio.util;
 
 import com.google.gson.JsonElement;
+import com.mojang.serialization.DataResult;
 import io.github.apace100.calio.data.SerializableData;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.InvalidIdentifierException;
@@ -17,6 +18,22 @@ public class DynamicIdentifier extends Identifier {
 
     public static Identifier of(String idString) {
         return of(idString, DEFAULT_NAMESPACE);
+    }
+
+    public static DataResult<Identifier> ofResult(String id) {
+        return ofResult(id, DEFAULT_NAMESPACE);
+    }
+
+    public static DataResult<Identifier> ofResult(String id, String defaultNamespace) {
+
+        try {
+            return DataResult.success(of(id, defaultNamespace));
+        }
+
+        catch (Exception e) {
+            return DataResult.error(e::getMessage);
+        }
+
     }
 
     public static Identifier of(String idString, String defaultNamespace) {

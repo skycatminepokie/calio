@@ -6,11 +6,9 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import io.github.apace100.calio.Calio;
 import net.fabricmc.fabric.impl.resource.conditions.ResourceConditionsImpl;
-import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.Unit;
 import net.minecraft.util.profiler.Profiler;
 import org.apache.commons.io.FilenameUtils;
 import org.jetbrains.annotations.Nullable;
@@ -50,14 +48,14 @@ public abstract class IdentifiableMultiJsonDataLoader extends ExtendedSinglePrep
     @Override
     protected MultiJsonDataContainer prepare(ResourceManager manager, Profiler profiler) {
 
-        MultiJsonDataContainer result = new MultiJsonDataContainer();
+        MultiJsonDataContainer prepared = new MultiJsonDataContainer();
         manager.findAllResources(directoryName, this::hasValidFormat).forEach((fileId, resources) -> {
 
             Identifier resourceId = this.trim(fileId, directoryName);
             String fileExtension = "." + FilenameUtils.getExtension(fileId.getPath());
 
             JsonFormat jsonFormat = this.getValidFormats().get(fileExtension);
-            for (Resource resource : resources) {
+            resources.forEach(resource -> {
 
                 String packName = resource.getPackId();
                 try (Reader resourceReader = resource.getReader()) {
@@ -70,10 +68,9 @@ public abstract class IdentifiableMultiJsonDataLoader extends ExtendedSinglePrep
                     }
 
                     else {
-                        result
-                            .computeIfAbsent(packName, k -> new LinkedHashMap<>())
-                            .computeIfAbsent(resourceId, k -> new LinkedList<>())
-                            .add(jsonElement);
+                        prepared
+                            .computeIfAbsent(resourceId, k -> new LinkedHashSet<>())
+                            .add(MultiJsonDataContainer.entry(packName, jsonElement));
                     }
 
                 }
@@ -82,54 +79,42 @@ public abstract class IdentifiableMultiJsonDataLoader extends ExtendedSinglePrep
                     this.onError(packName, resourceId, fileExtension, e);
                 }
 
-            }
+            });
 
         });
 
-        return result;
+        return prepared;
 
     }
 
     @Override
     protected void preApply(MultiJsonDataContainer prepared, ResourceManager manager, Profiler profiler) {
 
-        var preparedEntryIterator = prepared.entrySet().iterator();
-        while (preparedEntryIterator.hasNext()) {
+        var preparedIterator = prepared.entrySet().iterator();
+        while (preparedIterator.hasNext()) {
 
-            var preparedEntry = preparedEntryIterator.next();
+            var preparedData = preparedIterator.next();
 
-            String packName = preparedEntry.getKey();
-            Map<Identifier, List<JsonElement>> idAndJsonData = preparedEntry.getValue();
+            Identifier resourceId = preparedData.getKey();
+            Set<MultiJsonDataContainer.Entry> resourceEntries = preparedData.getValue();
 
-            var idAndJsonDataEntryIterator = idAndJsonData.entrySet().iterator();
-            while (idAndJsonDataEntryIterator.hasNext()) {
+            var entryIterator = resourceEntries.iterator();
+            while (entryIterator.hasNext()) {
 
-                var idAndJsonDataEntry = idAndJsonDataEntryIterator.next();
+                var resource = entryIterator.next();
 
-                Identifier id = idAndJsonDataEntry.getKey();
-                List<JsonElement> jsonData = idAndJsonDataEntry.getValue();
+                String source = resource.source();
+                JsonElement jsonElement = resource.jsonData();
 
-                Iterator<JsonElement> jsonIterator = jsonData.iterator();
-                while (jsonIterator.hasNext()) {
-
-                    JsonElement json = jsonIterator.next();
-                    if (!(json instanceof JsonObject jsonObject) || ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, id, Calio.DYNAMIC_REGISTRIES.get(Unit.INSTANCE))) {
-                        continue;
-                    }
-
-                    this.onReject(packName, id);
-                    jsonIterator.remove();
-
-                }
-
-                if (jsonData.isEmpty()) {
-                    idAndJsonDataEntryIterator.remove();
+                if (jsonElement instanceof JsonObject jsonObject && !ResourceConditionsImpl.applyResourceConditions(jsonObject, directoryName, resourceId, Calio.getDynamicRegistries().orElse(null))) {
+                    this.onReject(source, resourceId);
+                    entryIterator.remove();
                 }
 
             }
 
-            if (idAndJsonData.isEmpty()) {
-                preparedEntryIterator.remove();
+            if (resourceEntries.isEmpty()) {
+                preparedIterator.remove();
             }
 
         }

@@ -4,11 +4,18 @@
     "package": "io.github.apace100.calio.mixin",
     "compatibilityLevel": "JAVA_16",
     "mixins": [
+        "CachedRegistryInfoGetterAccessor",
         "DataPackContentsMixin",
         "IngredientAccessor",
+        "IngredientAccessor$EntryAccessor",
+        "ItemStackAccessor",
+        "RegistryEntryListNamedAccessor",
+        "RegistryOpsAccessor",
         "ReloadableRegistriesMixin",
         "ResourceConditionTypeMixin",
+        "TagEntryAccessor",
         "TagManagerLoaderMixin",
+        "WeightedListAccessor",
         "WeightedListEntryAccessor"
     ],
     "client": [],

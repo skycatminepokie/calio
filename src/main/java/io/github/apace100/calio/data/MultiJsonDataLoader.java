@@ -1,7 +1,6 @@
 package io.github.apace100.calio.data;
 
 import com.google.gson.*;
-import net.minecraft.resource.Resource;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.SinglePreparationResourceReloader;
 import net.minecraft.util.Identifier;
@@ -47,7 +46,7 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
             String fileExtension = "." + FilenameUtils.getExtension(fileId.getPath());
 
             JsonFormat jsonFormat = this.getValidFormats().get(fileExtension);
-            for (Resource resource : resources) {
+            resources.forEach(resource -> {
 
                 String packName = resource.getPackId();
                 try (Reader resourceReader = resource.getReader()) {
@@ -71,7 +70,7 @@ public abstract class MultiJsonDataLoader extends SinglePreparationResourceReloa
                     this.onError(packName, resourceId, fileExtension, e);
                 }
 
-            }
+            });
 
         });
 

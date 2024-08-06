@@ -5,8 +5,13 @@ accessible method net/minecraft/recipe/Ingredient$StackEntry <init> (Lnet/minecr
 accessible method net/minecraft/recipe/Ingredient$TagEntry <init> (Lnet/minecraft/registry/tag/TagKey;)V
 accessible method net/minecraft/recipe/Ingredient ofEntries (Ljava/util/stream/Stream;)Lnet/minecraft/recipe/Ingredient;
 extendable class net/minecraft/recipe/Ingredient
+accessible method net/minecraft/recipe/Ingredient <init> ([Lnet/minecraft/recipe/Ingredient$Entry;)V
 extendable method net/minecraft/resource/SinglePreparationResourceReloader reload (Lnet/minecraft/resource/ResourceReloader$Synchronizer;Lnet/minecraft/resource/ResourceManager;Lnet/minecraft/util/profiler/Profiler;Lnet/minecraft/util/profiler/Profiler;Ljava/util/concurrent/Executor;Ljava/util/concurrent/Executor;)Ljava/util/concurrent/CompletableFuture;
 accessible field net/minecraft/component/type/FoodComponent$Builder usingConvertsTo Ljava/util/Optional;
 extendable class net/minecraft/util/Identifier
 accessible method net/minecraft/util/Identifier <init> (Ljava/lang/String;Ljava/lang/String;)V
 extendable class net/minecraft/registry/ReloadableRegistries$ReloadableWrapperLookup
+accessible method net/minecraft/registry/tag/TagEntry <init> (Lnet/minecraft/util/dynamic/Codecs$TagEntryId;Z)V
+accessible method net/minecraft/util/collection/WeightedList <init> (Ljava/util/List;)V
+accessible method net/minecraft/util/collection/WeightedList$Entry <init> (Ljava/lang/Object;I)V
+accessible class net/minecraft/registry/RegistryOps$CachedRegistryInfoGetter
