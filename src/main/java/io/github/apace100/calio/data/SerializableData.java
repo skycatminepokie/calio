@@ -62,7 +62,7 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
                 }
 
                 else {
-                    throw Calio.createMissingRequiredFieldError(fieldName);
+                    throw new NoSuchFieldException("Field is required, but is missing!");
                 }
 
             }
