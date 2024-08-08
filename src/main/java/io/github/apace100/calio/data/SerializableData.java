@@ -279,7 +279,9 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
     public SerializableData copy() {
 
         SerializableData copy = new SerializableData();
-        copy.fields.putAll(fields);
+
+        copy.fields.putAll(this.fields);
+        copy.postProcessor = this.postProcessor;
 
         return copy;
 
