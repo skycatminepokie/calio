@@ -28,16 +28,20 @@ public class TagLike<T> {
 
     private final RegistryKey<? extends Registry<T>> registryRef;
 
-    private final Set<T> elements;
-    private final Map<TagKey<T>, Collection<T>> tags;
+    private final ImmutableSet<T> elements;
+    private final ImmutableMap<TagKey<T>, Collection<T>> tags;
 
-    private final Set<TagEntry> tagEntries;
+    private final ImmutableSet<TagEntry> tagEntries;
 
     public TagLike(RegistryKey<? extends Registry<T>> registryRef, Collection<T> elements, Map<TagKey<T>, Collection<T>> tags, Collection<TagEntry> tagEntries) {
         this.registryRef = registryRef;
         this.elements = ImmutableSet.copyOf(elements);
         this.tags = ImmutableMap.copyOf(tags);
         this.tagEntries = ImmutableSet.copyOf(tagEntries);
+    }
+
+    public ImmutableSet<TagEntry> entries() {
+        return tagEntries;
     }
 
     public boolean contains(@NotNull T element) {
