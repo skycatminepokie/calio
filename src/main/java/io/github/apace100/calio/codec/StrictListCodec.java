@@ -117,12 +117,8 @@ public record StrictListCodec<E>(StrictCodec<E> elementCodec, int minSize, int m
             else {
 
                 try {
-
-                    Pair<E, T> result = elementCodec().strictDecode(ops, input);
-
-                    inputs.add(result.getSecond());
-                    elements.add(result.getFirst());
-
+                    elements.add(elementCodec().strictParse(ops, input));
+                    inputs.add(input);
                 }
 
                 catch (DataException de) {
