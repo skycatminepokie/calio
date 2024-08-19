@@ -389,7 +389,7 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     return Optional.ofNullable(registry.getId(input))
                         .map(Identifier::toString)
                         .map(ops::createString)
-                        .orElseThrow(() -> new IllegalStateException("Entry " + input + "is not registered to registry \"" + registry.getKey().getValue() + "\""));
+                        .orElseThrow(() -> new IllegalStateException("Entry '" + input + "' is not registered to registry \"" + registry.getKey().getValue() + "\""));
                 }
 
             },
