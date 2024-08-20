@@ -269,14 +269,19 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<ParticleType<?>> PARTICLE_TYPE = SerializableDataType.registry(Registries.PARTICLE_TYPE);
 
-    public static final SerializableDataType<NbtCompound> NBT = SerializableDataType.of(Codec.withAlternative(NbtCompound.CODEC, StringNbtReader.NBT_COMPOUND_CODEC), PacketCodecs.nbtCompound(NbtSizeTracker::ofUnlimitedBytes).cast());
+    public static final SerializableDataType<NbtElement> NBT_ELEMENT = SerializableDataType.of(
+        Codec.PASSTHROUGH.xmap(dynamic -> dynamic.convert(NbtOps.INSTANCE).getValue(), nbtElement -> new Dynamic<>(NbtOps.INSTANCE, nbtElement.copy())),
+        PacketCodecs.nbt(NbtSizeTracker::ofUnlimitedBytes).cast()
+    );
+
+    public static final SerializableDataType<NbtCompound> NBT_COMPOUND = SerializableDataType.of(Codec.withAlternative(NbtCompound.CODEC, StringNbtReader.NBT_COMPOUND_CODEC), PacketCodecs.nbtCompound(NbtSizeTracker::ofUnlimitedBytes).cast());
 
     public static final SerializableDataType<ArgumentWrapper<NbtPathArgumentType.NbtPath>> NBT_PATH = SerializableDataType.argumentType(NbtPathArgumentType.nbtPath());
 
     public static final CompoundSerializableDataType<ParticleEffect> PARTICLE_EFFECT = SerializableDataType.compound(
         new SerializableData()
             .add("type", PARTICLE_TYPE)
-            .addSupplied("params", NBT, NbtCompound::new),
+            .addSupplied("params", NBT_COMPOUND, NbtCompound::new),
         (data, ops) -> {
 
             ParticleType<? extends ParticleEffect> particleType = data.get("type");
