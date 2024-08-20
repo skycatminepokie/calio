@@ -593,11 +593,16 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     }
 
                     try {
-                        RegistryEntryLookup<T> entryLookup = Calio.getRegistryEntryLookup(ops, registryRef, () -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
+
+                        RegistryEntryLookup<T> entryLookup = Calio
+                            .getRegistryEntryLookup(ops, registryRef)
+                            .orElseThrow(() -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
+
                         result = entryLookup.getOptional(tag)
                             .map(named -> tagAndInput)
                             .map(DataResult::success)
                             .orElseGet(() -> DataResult.error(() -> "Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist"));
+
                     }
 
                     catch (Exception e) {
@@ -693,11 +698,16 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     }
 
                     try {
-                        RegistryEntryLookup<T> entryLookup = Calio.getRegistryEntryLookup(ops, registryRef, () -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
+
+                        RegistryEntryLookup<T> entryLookup = Calio
+                            .getRegistryEntryLookup(ops, registryRef)
+                            .orElseThrow(() -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
+
                         result = entryLookup.getOptional(key)
                             .map(named -> keyAndInput)
                             .map(DataResult::success)
                             .orElseGet(() -> DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\""));
+
                     }
 
                     catch (Exception e) {

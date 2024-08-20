@@ -298,7 +298,9 @@ public final class SerializableDataTypes {
 
             else {
 
-                RegistryOps<NbtElement> nbtOps = Calio.convertToRegistryOps(ops, NbtOps.INSTANCE, () -> new IllegalStateException("Couldn't decode particle effect without access to registries!"));
+                RegistryOps<NbtElement> nbtOps = Calio
+                    .convertToRegistryOps(ops, NbtOps.INSTANCE)
+                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effect without access to registries!"));
                 paramsNbt.putString("type", particleTypeId.toString());
 
                 return ParticleTypes.TYPE_CODEC

@@ -237,7 +237,10 @@ public class TagLike<T> {
                 @Override
                 public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
 
-                    RegistryEntryLookup<E> entryLookup = Calio.getRegistryEntryLookup(ops, registryRef, () -> new IllegalStateException("Couldn't decode tag-like without access to registries!"));
+                    RegistryEntryLookup<E> entryLookup = Calio
+                        .getRegistryEntryLookup(ops, registryRef)
+                        .orElseThrow(() -> new IllegalStateException("Couldn't decode tag-like without access to registries!"));
+
                     var tagEntries = StrictListCodec.of(CalioCodecs.TAG_ENTRY)
                         .xmap(ObjectOpenHashSet::new, LinkedList::new)
                         .strictParse(ops, input);

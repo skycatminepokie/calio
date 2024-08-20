@@ -24,7 +24,6 @@ import org.apache.logging.log4j.Logger;
 import org.jetbrains.annotations.ApiStatus;
 
 import java.util.*;
-import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 public class Calio implements ModInitializer {
@@ -86,46 +85,36 @@ public class Calio implements ModInitializer {
 
 	}
 
-	public static <T> RegistryOps<T> getRegistryOps(DynamicOps<T> ops, Supplier<RuntimeException> exception) {
+	public static <T> Optional<RegistryOps<T>> getRegistryOps(DynamicOps<T> ops) {
 
 		if (ops instanceof RegistryOps<T> regOps) {
-			return regOps;
+			return Optional.of(regOps);
 		}
 
 		else {
-			return getDynamicRegistries()
-				.map(drm -> drm.getOps(ops))
-				.orElseThrow(exception);
+			return getDynamicRegistries().map(drm -> drm.getOps(ops));
 		}
 
 	}
 
-    public static <F, T> RegistryOps<T> convertToRegistryOps(DynamicOps<F> sourceOps, DynamicOps<T> ops, Supplier<RuntimeException> exception) {
-
-		RegistryOps<F> registryOps = getRegistryOps(sourceOps, exception);
-		if (((RegistryOpsAccessor) registryOps).getRegistryInfoGetter() instanceof RegistryOps.CachedRegistryInfoGetter infoGetter) {
-			RegistryWrapper.WrapperLookup registriesLookup = ((CachedRegistryInfoGetterAccessor) (Object) infoGetter).getRegistriesLookup();
-			return registriesLookup.getOps(ops);
-		}
-
-		else {
-			throw exception.get();
-		}
-
+	public static <F, T> Optional<RegistryOps<T>> convertToRegistryOps(DynamicOps<F> fromOps, DynamicOps<T> toOps) {
+		return getWrapperLookup(fromOps).map(wrapperLookup -> wrapperLookup.getOps(toOps));
 	}
 
-	public static <R, I> RegistryEntryLookup<R> getRegistryEntryLookup(DynamicOps<I> ops, RegistryKey<? extends Registry<R>> registryRef, Supplier<RuntimeException> exception) {
+	public static <T> Optional<RegistryWrapper.WrapperLookup> getWrapperLookup(DynamicOps<T> ops) {
+		return getDynamicRegistries()
+			.map(RegistryWrapper.WrapperLookup.class::cast)
+			.or(() -> {
 
-		if (ops instanceof RegistryOps<I> registryOps) {
-			return registryOps.getEntryLookup(registryRef)
-				.or(() -> getRegistryEntryLookup(registryRef))
-				.orElseThrow(exception);
-		}
+				RegistryOps.RegistryInfoGetter infoGetter = getRegistryOps(ops)
+					.map(registryOps -> ((RegistryOpsAccessor) registryOps).getRegistryInfoGetter())
+					.orElse(null);
 
-		else {
-			return getRegistryEntryLookup(registryRef).orElseThrow(exception);
-		}
+				return infoGetter instanceof RegistryOps.CachedRegistryInfoGetter cachedInfoGetter
+					? Optional.of(((CachedRegistryInfoGetterAccessor) (Object) cachedInfoGetter).getRegistriesLookup())
+					: Optional.empty();
 
+			});
 	}
 
 	public static <R, I> Optional<RegistryEntryLookup<R>> getRegistryEntryLookup(DynamicOps<I> ops, RegistryKey<? extends Registry<R>> registryRef) {
