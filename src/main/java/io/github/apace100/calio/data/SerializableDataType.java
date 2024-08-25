@@ -907,10 +907,15 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     public static <T, U extends ArgumentType<T>> SerializableDataType<ArgumentWrapper<T>> argumentType(U argumentType) {
         return lazy(() -> SerializableDataTypes.STRING.comapFlatMap(
-            str -> {
+            input -> {
 
                 try {
-                    return DataResult.success(new ArgumentWrapper<>(argumentType.parse(new StringReader(str)), str));
+
+                    StringReader inputReader = new StringReader(input);
+                    T argument = argumentType.parse(inputReader);
+
+                    return DataResult.success(new ArgumentWrapper<>(argument, input));
+
                 }
 
                 catch (Exception e) {
