@@ -556,7 +556,15 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return base.xmap(fromFunction, toFunction);
     }
 
+    /**
+     *  Use {@link #tagKey(RegistryKey)} instead.
+     */
+    @Deprecated
     public static <T> SerializableDataType<TagKey<T>> tag(RegistryKey<? extends Registry<T>> registryRef) {
+        return tagKey(registryRef);
+    }
+
+    public static <T> SerializableDataType<TagKey<T>> tagKey(RegistryKey<? extends Registry<T>> registryRef) {
         return lazy(() -> new SerializableDataType<>(
             new StrictCodec<>() {
 
@@ -570,12 +578,10 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                         return tagAndInput;
                     }
 
-                    else if (Calio.getRegistryEntryLookup(ops, registryRef).map(lookup -> lookup.getOptional(tag).isEmpty()).orElse(false)) {
-                        throw new IllegalArgumentException("Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist");
-                    }
-
                     else {
-                        return tagAndInput;
+                        return Calio.getOptionalEntries(ops, tag)
+                            .map(registryEntries -> tagAndInput)
+                            .orElseThrow(() -> createError(tag));
                     }
 
                 }
@@ -586,29 +592,17 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     Pair<TagKey<T>, I> tagAndInput = this.createTagKey(ops, input);
                     TagKey<T> tag = tagAndInput.getFirst();
 
-                    DataResult<Pair<TagKey<T>, I>> result;
                     if (Calio.getRegistryTags().map(tags -> tags.containsKey(tag)).orElse(false)) {
                         return DataResult.success(tagAndInput);
                     }
 
-                    try {
-
-                        RegistryEntryLookup<T> entryLookup = Calio
-                            .getRegistryEntryLookup(ops, registryRef)
-                            .orElseThrow(() -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
-
-                        result = entryLookup.getOptional(tag)
-                            .map(named -> tagAndInput)
+                    else {
+                        return Calio.getOptionalEntries(ops, tag)
+                            .map(registryEntries -> tagAndInput)
                             .map(DataResult::success)
-                            .orElseGet(() -> DataResult.error(() -> "Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist"));
-
+                            .orElseThrow(() -> createError(tag))
+                            .setPartial(tagAndInput);
                     }
-
-                    catch (Exception e) {
-                        result =  DataResult.error(e::getMessage);
-                    }
-
-                    return result.setPartial(tagAndInput);
 
                 }
 
@@ -621,6 +615,10 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     return SerializableDataTypes.IDENTIFIER
                         .strictDecode(ops, input)
                         .mapFirst(id -> TagKey.of(registryRef, id));
+                }
+
+                private IllegalArgumentException createError(TagKey<T> tagKey) {
+                    return new IllegalArgumentException("Tag \"" + tagKey.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
                 }
 
             },
