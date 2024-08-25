@@ -207,13 +207,13 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<StatusEffectInstance>> STATUS_EFFECT_INSTANCES = STATUS_EFFECT_INSTANCE.listOf();
 
-    public static final SerializableDataType<TagKey<Item>> ITEM_TAG = SerializableDataType.tag(RegistryKeys.ITEM);
+    public static final SerializableDataType<TagKey<Item>> ITEM_TAG = SerializableDataType.tagKey(RegistryKeys.ITEM);
 
-    public static final SerializableDataType<TagKey<Fluid>> FLUID_TAG = SerializableDataType.tag(RegistryKeys.FLUID);
+    public static final SerializableDataType<TagKey<Fluid>> FLUID_TAG = SerializableDataType.tagKey(RegistryKeys.FLUID);
 
-    public static final SerializableDataType<TagKey<Block>> BLOCK_TAG = SerializableDataType.tag(RegistryKeys.BLOCK);
+    public static final SerializableDataType<TagKey<Block>> BLOCK_TAG = SerializableDataType.tagKey(RegistryKeys.BLOCK);
 
-    public static final SerializableDataType<TagKey<EntityType<?>>> ENTITY_TAG = SerializableDataType.tag(RegistryKeys.ENTITY_TYPE);
+    public static final SerializableDataType<TagKey<EntityType<?>>> ENTITY_TAG = SerializableDataType.tagKey(RegistryKeys.ENTITY_TYPE);
 
     public static final SerializableDataType<Ingredient.Entry> INGREDIENT_ENTRY = SerializableDataType.of(Ingredient.Entry.CODEC);
 
@@ -396,7 +396,7 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<RegistryEntry<GameEvent>>> GAME_EVENT_ENTRIES = GAME_EVENT_ENTRY.listOf();
 
-    public static final SerializableDataType<TagKey<GameEvent>> GAME_EVENT_TAG = SerializableDataType.tag(RegistryKeys.GAME_EVENT);
+    public static final SerializableDataType<TagKey<GameEvent>> GAME_EVENT_TAG = SerializableDataType.tagKey(RegistryKeys.GAME_EVENT);
 
     public static final SerializableDataType<Fluid> FLUID = SerializableDataType.registry(Registries.FLUID);
 
@@ -533,7 +533,7 @@ public final class SerializableDataTypes {
         }
     );
 
-    public static final SerializableDataType<TagKey<Biome>> BIOME_TAG = SerializableDataType.tag(RegistryKeys.BIOME);
+    public static final SerializableDataType<TagKey<Biome>> BIOME_TAG = SerializableDataType.tagKey(RegistryKeys.BIOME);
 
     public static final SerializableDataType<TagLike<Item>> ITEM_TAG_LIKE = SerializableDataType.tagLike(Registries.ITEM);
 
@@ -546,6 +546,8 @@ public final class SerializableDataTypes {
     public static final SerializableDataType<RegistryKey<LootFunction>> ITEM_MODIFIER = SerializableDataType.registryKey(RegistryKeys.ITEM_MODIFIER);
 
     public static final SerializableDataType<RegistryKey<LootCondition>> PREDICATE = SerializableDataType.registryKey(RegistryKeys.PREDICATE);
+
+    public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.of(CalioCodecs.TAG_ENTRY, CalioPacketCodecs.TAG_ENTRY.cast());
 
     public static void init() {
 

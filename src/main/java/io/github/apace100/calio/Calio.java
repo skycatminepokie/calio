@@ -15,6 +15,7 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.minecraft.advancement.criterion.Criteria;
 import net.minecraft.registry.*;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.server.DataPackContents;
 import net.minecraft.util.Identifier;
@@ -118,15 +119,9 @@ public class Calio implements ModInitializer {
 	}
 
 	public static <R, I> Optional<RegistryEntryLookup<R>> getRegistryEntryLookup(DynamicOps<I> ops, RegistryKey<? extends Registry<R>> registryRef) {
-
-		if (ops instanceof RegistryOps<I> registryOps) {
-			return registryOps.getEntryLookup(registryRef).or(() -> getRegistryEntryLookup(registryRef));
-		}
-
-		else {
-			return getRegistryEntryLookup(registryRef);
-		}
-
+		return getRegistryEntryLookup(registryRef)
+			.or(() -> getRegistryOps(ops)
+				.flatMap(registryOps -> registryOps.getEntryLookup(registryRef)));
 	}
 
 	public static <R> Optional<RegistryEntryLookup<R>> getRegistryEntryLookup(RegistryKey<? extends Registry<R>> registryRef) {

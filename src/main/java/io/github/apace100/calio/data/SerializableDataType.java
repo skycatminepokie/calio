@@ -88,23 +88,21 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     @Override
     public SerializableDataType<List<T>> listOf(int minSize, int maxSize) {
-        StrictListCodec<T> listCodec = new StrictListCodec<>(this.baseCodec(), minSize, maxSize);
         return new SerializableDataType<>(
             new StrictCodec<>() {
+
+                private final StrictListCodec<T> listCodec = new StrictListCodec<>(baseCodec(), minSize, maxSize);
 
                 @Override
                 public <I> Pair<List<T>, I> strictDecode(DynamicOps<I> ops, I input) {
 
-                    ImmutableList.Builder<T> listBuilder = ImmutableList.builder();
-                    if (ops.getList(input).result().isPresent()) {
-                        listBuilder.addAll(listCodec.strictParse(ops, input));
+                    if (ops.getList(input).isSuccess()) {
+                        return listCodec.strictDecode(ops, input);
                     }
 
                     else {
-                        listBuilder.add(SerializableDataType.this.strictParse(ops, input));
+                        return baseCodec().strictDecode(ops, input).mapFirst(ImmutableList::of);
                     }
-
-                    return Pair.of(listBuilder.build(), input);
 
                 }
 
@@ -822,32 +820,11 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     public static <E extends Enum<E>> SerializableDataType<EnumSet<E>> enumSet(SerializableDataType<E> enumDataType) {
-        StrictCodec<EnumSet<E>> setCodec = new StrictListCodec<>(enumDataType, 1, Integer.MAX_VALUE).xmap(EnumSet::copyOf, LinkedList::new);
         return new SerializableDataType<>(
-            new StrictCodec<>() {
-
-                @Override
-                public <T> Pair<EnumSet<E>, T> strictDecode(DynamicOps<T> ops, T input) {
-
-                    Set<E> values = new HashSet<>();
-                    if (ops.getList(input).result().isPresent()) {
-                        values.addAll(setCodec.strictParse(ops, input));
-                    }
-
-                    else {
-                        values.add(enumDataType.strictParse(ops, input));
-                    }
-
-                    return Pair.of(EnumSet.copyOf(values), input);
-
-                }
-
-                @Override
-                public <T> T strictEncode(EnumSet<E> input, DynamicOps<T> ops, T prefix) {
-                    return setCodec.strictEncode(input, ops, prefix);
-                }
-
-            },
+            enumDataType.listOf(1, Integer.MAX_VALUE).xmap(
+                EnumSet::copyOf,
+                LinkedList::new
+            ),
             CalioPacketCodecs.collection(HashSet::new, enumDataType.packetCodec()).xmap(
                 EnumSet::copyOf,
                 HashSet::new

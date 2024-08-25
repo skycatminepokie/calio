@@ -8,9 +8,11 @@ import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.*;
 import io.github.apace100.calio.data.DataException;
 import io.github.apace100.calio.data.SerializableDataType;
+import io.github.apace100.calio.data.SerializableDataTypes;
 import io.github.apace100.calio.mixin.RegistryEntryListNamedAccessor;
 import io.github.apace100.calio.mixin.TagEntryAccessor;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
@@ -184,7 +186,7 @@ public class TagLike<T> {
                             .orElse(null));
 
                     if (required && tagValues == null) {
-                        throw new DataException(DataException.Phase.READING, path, "Tag \"" + id + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist");
+                        throw new DataException(DataException.Phase.READING, path, "Tag \"" + id + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
                     }
 
                     else if (tagValues != null) {
@@ -203,7 +205,7 @@ public class TagLike<T> {
                             .orElse(null));
 
                     if (required && element == null) {
-                        throw new DataException(DataException.Phase.READING, path, "Type \"" + id + "\" is not registered in registry \"" + registryRef.getValue() + "\"");
+                        throw new DataException(DataException.Phase.READING, path, "Type \"" + id + "\" is not registered in registry \"" + registryRef.getValue() + "\"!");
                     }
 
                     else if (element != null) {
@@ -223,16 +225,14 @@ public class TagLike<T> {
     }
 
     public static <E> SerializableDataType<TagLike<E>> dataType(RegistryKey<E> registryKey) {
-        RegistryKey<? extends Registry<E>> registryRef = registryKey.getRegistryRef();
         return SerializableDataType.of(
             new StrictCodec<>() {
 
-                @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return StrictListCodec
-                        .of(CalioCodecs.TAG_ENTRY)
-                        .strictEncode(new LinkedList<>(input.tagEntries), ops, prefix);
-                }
+                private final RegistryKey<? extends Registry<E>> registryRef = registryKey.getRegistryRef();
+                private final SerializableDataType<Set<TagEntry>> listDataType = SerializableDataTypes.TAG_ENTRY.listOf().xmap(
+                    ObjectOpenHashSet::new,
+                    ObjectArrayList::new
+                );
 
                 @Override
                 public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
@@ -241,12 +241,15 @@ public class TagLike<T> {
                         .getRegistryEntryLookup(ops, registryRef)
                         .orElseThrow(() -> new IllegalStateException("Couldn't decode tag-like without access to registries!"));
 
-                    var tagEntries = StrictListCodec.of(CalioCodecs.TAG_ENTRY)
-                        .xmap(ObjectOpenHashSet::new, LinkedList::new)
-                        .strictParse(ops, input);
+                    return listDataType.strictDecode(ops, input)
+                        .mapFirst(entries -> new Builder<>(registryRef, entries))
+                        .mapFirst(builder -> builder.build(entryLookup));
 
-                    return Pair.of(new Builder<>(registryRef, tagEntries).build(entryLookup), input);
+                }
 
+                @Override
+                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return listDataType.strictEncode(input.tagEntries, ops, prefix);
                 }
 
             },
@@ -258,26 +261,24 @@ public class TagLike<T> {
     }
 
     public static <E> SerializableDataType<TagLike<E>> dataType(Registry<E> registry) {
-        RegistryKey<? extends Registry<E>> registryRef = registry.getKey();
         return SerializableDataType.of(
             new StrictCodec<>() {
 
-                @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return StrictListCodec
-                        .of(CalioCodecs.TAG_ENTRY)
-                        .strictEncode(new LinkedList<>(input.tagEntries), ops, prefix);
-                }
+                private final SerializableDataType<Set<TagEntry>> listDataType = SerializableDataTypes.TAG_ENTRY.listOf().xmap(
+                    ObjectOpenHashSet::new,
+                    ObjectArrayList::new
+                );
 
                 @Override
                 public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
+                    return listDataType.strictDecode(ops, input)
+                        .mapFirst(entries -> new Builder<>(registry.getKey(), entries))
+                        .mapFirst(builder -> builder.build(registry.getReadOnlyWrapper()));
+                }
 
-                    List<TagEntry> tagEntries = StrictListCodec
-                        .of(CalioCodecs.TAG_ENTRY)
-                        .strictParse(ops, input);
-
-                    return Pair.of(new Builder<>(registryRef, tagEntries).build(registry.getReadOnlyWrapper()), input);
-
+                @Override
+                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return listDataType.strictEncode(input.tagEntries, ops, prefix);
                 }
 
             },
