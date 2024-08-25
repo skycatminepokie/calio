@@ -633,12 +633,15 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return lazy(() -> new SerializableDataType<>(
             new StrictCodec<>() {
 
+                private final RegistryKey<? extends Registry<T>> registryRef = registry.getKey();
+                private final SerializableDataType<RegistryKey<T>> keyDataType = registryKey(registryRef);
+
                 @Override
                 public <I> Pair<RegistryEntry<T>, I> strictDecode(DynamicOps<I> ops, I input) {
-                    Identifier id = SerializableDataTypes.IDENTIFIER.strictParse(ops, input);
-                    return registry.getEntry(id)
+                    RegistryKey<T> key = keyDataType.strictParse(ops, input);
+                    return registry.getEntry(key)
                         .map(entry -> Pair.of((RegistryEntry<T>) entry, input))
-                        .orElseThrow(() -> new IllegalArgumentException("Type \"" + id + "\" is not registered in registry \"" + registry.getKey().getValue() + "\""));
+                        .orElseThrow();
                 }
 
                 @Override
@@ -647,7 +650,7 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                         .map(RegistryKey::getValue)
                         .map(Identifier::toString)
                         .map(ops::createString)
-                        .orElseThrow(() -> new IllegalStateException("Entry \"" + input + "\" is not registered in registry \"" + registry.getKey().getValue() + "\";"));
+                        .orElseThrow(() -> new IllegalStateException("Entry \"" + input + "\" is not registered in registry \"" + registryRef.getValue() + "\"!"));
                 }
 
             },
