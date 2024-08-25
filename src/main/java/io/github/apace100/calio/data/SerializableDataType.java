@@ -19,7 +19,6 @@ import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryEntryLookup;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagKey;
@@ -659,7 +658,7 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     public static <T> SerializableDataType<RegistryKey<T>> registryKey(RegistryKey<? extends Registry<T>> registryRef) {
-        return registryKey(registryRef, List.of());
+        return registryKey(registryRef, Set.of());
     }
 
     public static <T> SerializableDataType<RegistryKey<T>> registryKey(RegistryKey<? extends Registry<T>> registryRef, Collection<RegistryKey<T>> exemptions) {
@@ -672,16 +671,14 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     Pair<RegistryKey<T>, I> keyAndInput = this.createRegistryKey(ops, input);
                     RegistryKey<T> key = keyAndInput.getFirst();
 
-                    if (Calio.getRegistry(registryRef).map(registry -> registry.contains(key)).orElse(false)) {
+                    if (exemptions.contains(key)) {
                         return keyAndInput;
-                    }
-
-                    else if (Calio.getRegistryEntryLookup(ops, registryRef).map(lookup -> lookup.getOptional(key).isEmpty()).orElse(false)) {
-                        throw new IllegalArgumentException("Type \"" + key.getValue() + "\" is not registered in registry \"" + key.getRegistry() + "\"");
                     }
 
                     else {
-                        return keyAndInput;
+                        return Calio.getOptionalEntry(ops, key)
+                            .map(reference -> keyAndInput)
+                            .orElseThrow(() -> createError(key));
                     }
 
                 }
@@ -689,32 +686,20 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                 @Override
                 public <I> DataResult<Pair<RegistryKey<T>, I>> decode(DynamicOps<I> ops, I input) {
 
-                    Pair<RegistryKey<T>, I> keyAndInput = this.createRegistryKey(ops, input);
+                    Pair<RegistryKey<T>, I> keyAndInput = createRegistryKey(ops, input);
                     RegistryKey<T> key = keyAndInput.getFirst();
 
-                    DataResult<Pair<RegistryKey<T>, I>> result;
-                    if (Calio.getRegistry(registryRef).map(registry -> registry.contains(key)).orElse(false)) {
+                    if (exemptions.contains(key)) {
                         return DataResult.success(keyAndInput);
                     }
 
-                    try {
-
-                        RegistryEntryLookup<T> entryLookup = Calio
-                            .getRegistryEntryLookup(ops, registryRef)
-                            .orElseThrow(() -> new IllegalStateException("Couldn't decode and validate tag key without access to registries!"));
-
-                        result = entryLookup.getOptional(key)
-                            .map(named -> keyAndInput)
+                    else {
+                        return Calio.getOptionalEntry(ops, key)
+                            .map(reference -> keyAndInput)
                             .map(DataResult::success)
-                            .orElseGet(() -> DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\""));
-
+                            .orElseThrow(() -> createError(key))
+                            .setPartial(keyAndInput);
                     }
-
-                    catch (Exception e) {
-                        result =  DataResult.error(e::getMessage);
-                    }
-
-                    return result.setPartial(keyAndInput);
 
                 }
 
@@ -727,6 +712,10 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     return SerializableDataTypes.IDENTIFIER
                         .strictDecode(ops, input)
                         .mapFirst(id -> RegistryKey.of(registryRef, id));
+                }
+
+                private IllegalArgumentException createError(RegistryKey<T> registryKey) {
+                    return new IllegalArgumentException("Type \"" + registryKey.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!");
                 }
 
             },

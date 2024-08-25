@@ -133,6 +133,16 @@ public class Calio implements ModInitializer {
 		return Optional.ofNullable(DYNAMIC_REGISTRIES.get(Unit.INSTANCE)).flatMap(drm -> drm.getOptionalWrapper(registryRef));
 	}
 
+	public static <R, I> Optional<RegistryEntry.Reference<R>> getOptionalEntry(DynamicOps<I> ops, RegistryKey<R> registryKey) {
+		return getRegistryEntryLookup(ops, registryKey.getRegistryRef())
+			.flatMap(entryLookup -> entryLookup.getOptional(registryKey));
+	}
+
+	public static <R, I> Optional<RegistryEntryList.Named<R>> getOptionalEntries(DynamicOps<I> ops, TagKey<R> tagKey) {
+		return getRegistryEntryLookup(ops, tagKey.registry())
+			.flatMap(entryLookup -> entryLookup.getOptional(tagKey));
+	}
+
 	@SuppressWarnings("unchecked")
 	public static <T> Optional<Stream<RegistryEntry<T>>> getRegistryEntries(TagKey<T> tag) {
 		return getRegistryTags()
