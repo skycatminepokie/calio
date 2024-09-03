@@ -209,6 +209,18 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return (T) data;
     }
 
+    public SerializableDataType<Optional<T>> optional() {
+        return optional(this, false);
+    }
+
+    public SerializableDataType<Optional<T>> lenientOptional() {
+        return optional(this, true);
+    }
+
+    public SerializableDataType<Optional<T>> lenientOptional(Consumer<String> warningHandler) {
+        return optional(this, true, warningHandler);
+    }
+
     public static <T> SerializableDataType<T> of(Codec<T> codec) {
         return switch (codec) {
             case SerializableDataType<T> selfDataType ->
@@ -970,7 +982,11 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     public static <T> SerializableDataType<Optional<T>> optional(SerializableDataType<T> dataType, boolean lenient) {
-        return new SerializableDataType<>(
+        return optional(dataType, lenient, warn -> {});
+    }
+
+    public static <T> SerializableDataType<Optional<T>> optional(SerializableDataType<T> dataType, boolean lenient, Consumer<String> warningHandler) {
+        return of(
             new StrictCodec<>() {
 
                 @Override
@@ -983,6 +999,7 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                     catch (Exception e) {
 
                         if (lenient) {
+                            warningHandler.accept(e.getMessage());
                             return Pair.of(Optional.empty(), input);
                         }
 
