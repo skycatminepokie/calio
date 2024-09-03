@@ -2,22 +2,15 @@ package io.github.apace100.calio.util;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.mojang.datafixers.util.Pair;
-import com.mojang.serialization.*;
-import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.*;
 import io.github.apace100.calio.data.DataException;
-import io.github.apace100.calio.data.SerializableDataType;
-import io.github.apace100.calio.data.SerializableDataTypes;
-import io.github.apace100.calio.mixin.RegistryEntryListNamedAccessor;
+import io.github.apace100.calio.mixin.RegistryEntryListBackedAccessor;
 import io.github.apace100.calio.mixin.TagEntryAccessor;
-import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.registry.*;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
@@ -29,16 +22,15 @@ import java.util.*;
 public class TagLike<T> {
 
     private final RegistryKey<? extends Registry<T>> registryRef;
-
-    private final ImmutableSet<T> elements;
-    private final ImmutableMap<TagKey<T>, Collection<T>> tags;
-
     private final ImmutableSet<TagEntry> tagEntries;
 
-    public TagLike(RegistryKey<? extends Registry<T>> registryRef, Collection<T> elements, Map<TagKey<T>, Collection<T>> tags, Collection<TagEntry> tagEntries) {
+    private final ImmutableMap<RegistryKey<T>, T> elementsByKey;
+    private final ImmutableMap<TagKey<T>, Collection<T>> elementsByTag;
+
+    protected TagLike(RegistryKey<? extends Registry<T>> registryRef, Map<RegistryKey<T>, T> elementsByKey, Map<TagKey<T>, Collection<T>> elementsByTag, Collection<TagEntry> tagEntries) {
         this.registryRef = registryRef;
-        this.elements = ImmutableSet.copyOf(elements);
-        this.tags = ImmutableMap.copyOf(tags);
+        this.elementsByKey = ImmutableMap.copyOf(elementsByKey);
+        this.elementsByTag = ImmutableMap.copyOf(elementsByTag);
         this.tagEntries = ImmutableSet.copyOf(tagEntries);
     }
 
@@ -47,78 +39,37 @@ public class TagLike<T> {
     }
 
     public boolean contains(@NotNull T element) {
-        return elements.contains(element)
-            || tags.values().stream().flatMap(Collection::stream).anyMatch(element::equals);
+        return elementsByKey.containsValue(element)
+            || elementsByTag.values().stream().flatMap(Collection::stream).anyMatch(element::equals);
     }
 
     public void write(RegistryByteBuf buf) {
 
-        DynamicRegistryManager registryManager = buf.getRegistryManager();
+        buf.writeRegistryKey(registryRef);
+        CalioPacketCodecs.TAG_ENTRY_SET.encode(buf, entries());
 
-        Registry<T> registry = registryManager.get(registryRef);
-        buf.writeRegistryKey(registry.getKey());
-
-        List<Identifier> elementIds = new LinkedList<>();
-        for (T element : elements) {
-            registry.getKey(element)
-                .map(RegistryKey::getValue)
-                .ifPresent(elementIds::add);
-        }
-
-        buf.writeVarInt(elementIds.size());
-        elementIds.forEach(buf::writeIdentifier);
-
-        buf.writeVarInt(tags.size());
-        for (TagKey<T> tag : tags.keySet()) {
-            buf.writeIdentifier(tag.id());
-        }
-
-        CalioPacketCodecs
-            .collection(HashSet::new, CalioPacketCodecs.TAG_ENTRY)
-            .encode(buf, new HashSet<>(tagEntries));
+        buf.writeBoolean(SerializableRegistries.SYNCED_REGISTRIES.contains(registryRef));
 
     }
 
     public static <T> TagLike<T> read(RegistryByteBuf buf) {
 
-        RegistryKey<? extends Registry<T>> registryRef = RegistryKey.ofRegistry(buf.readIdentifier());
-        Registry<T> registry = buf.getRegistryManager().get(registryRef);
+        RegistryKey<? extends Registry<T>> registryRef = buf.readRegistryRefKey();
+        Set<TagEntry> tagEntries = CalioPacketCodecs.TAG_ENTRY_SET.decode(buf);
 
-        Set<T> elements = new ObjectOpenHashSet<>();
-        int elementIdsSize = buf.readVarInt();
-
-        for (int i = 0; i < elementIdsSize; i++) {
-            registry
-                .getOrEmpty(buf.readIdentifier())
-                .ifPresent(elements::add);
-        }
-
-        Map<TagKey<T>, Collection<T>> tags = new Object2ObjectOpenHashMap<>();
-        int tagsSize = buf.readVarInt();
-
-        for (int i = 0; i < tagsSize; i++) {
-
-            TagKey<T> tag = TagKey.of(registryRef, buf.readIdentifier());
-            registry
-                .streamEntries()
-                .filter(reference -> reference.isIn(tag))
-                .map(RegistryEntry.Reference::value)
-                .forEach(element -> tags
-                    .computeIfAbsent(tag, _tag -> new ObjectOpenHashSet<>())
-                    .add(element));
-
-        }
-
-        Set<TagEntry> tagEntries = CalioPacketCodecs
-            .collection(HashSet::new, CalioPacketCodecs.TAG_ENTRY)
-            .decode(buf);
-
-        return new TagLike<>(registryRef, elements, tags, tagEntries);
+        boolean syncedRegistry = buf.readBoolean();
+        return syncedRegistry
+            ? builder(registryRef).build(buf.getRegistryManager().getWrapperOrThrow(registryRef))
+            : new TagLike<>(registryRef, Map.of(), Map.of(), tagEntries);
 
     }
 
-    public static <T> Builder<T> builder(RegistryKey<? extends Registry<T>> registryKey) {
-        return new Builder<>(registryKey);
+    public static <T> Builder<T> builder(RegistryKey<? extends Registry<T>> registryRef) {
+        return new Builder<>(registryRef);
+    }
+
+    public static <T> Builder<T> builder(RegistryKey<? extends Registry<T>> registryRef, Collection<TagEntry> tagEntries) {
+        return new Builder<>(registryRef, tagEntries);
     }
 
     public static class Builder<E> {
@@ -133,7 +84,7 @@ public class TagLike<T> {
 
         public Builder(TagLike<E> tagLike) {
             this.registryRef = tagLike.registryRef;
-            this.tagEntries = new ObjectOpenHashSet<>(tagLike.tagEntries);
+            this.tagEntries = new ObjectOpenHashSet<>(tagLike.entries());
         }
 
         public Builder(RegistryKey<? extends Registry<E>> registryRef, Collection<TagEntry> tagEntries) {
@@ -163,130 +114,63 @@ public class TagLike<T> {
         @SuppressWarnings("unchecked")
         public TagLike<E> build(@NotNull RegistryEntryLookup<E> entryLookup) {
 
+            Map<RegistryKey<E>, E> elementsByKey = new HashMap<>();
             Map<TagKey<E>, Collection<E>> elementsByTag = new HashMap<>();
-            Set<TagEntry> tagEntriesToAdd = new HashSet<>();
 
-            Set<E> elements = new HashSet<>();
-            for (TagEntry tagEntry : tagEntries) {
+            Set<TagEntry> tagEntries = new HashSet<>();
+            for (TagEntry tagEntry : this.tagEntries) {
 
-                TagEntryAccessor entryAccessor = (TagEntryAccessor) tagEntry;
-                boolean required = entryAccessor.isRequired();
+                TagEntryAccessor tagEntryAccess = (TagEntryAccessor) tagEntry;
 
-                Identifier id = entryAccessor.getId();
-                String path = "[" + tagEntriesToAdd.size() + "]";
+                Identifier id = tagEntryAccess.getId();
+                String path = "[" + tagEntries.size() + "]";
 
-                if (entryAccessor.isTag()) {
+                boolean isTag = tagEntryAccess.isTag();
+                boolean required = tagEntryAccess.isRequired();
+
+                if (isTag) {
 
                     TagKey<E> tag = TagKey.of(registryRef, id);
-                    List<E> tagValues = Calio.getRegistryEntries(tag)
-                        .map(entries -> entries.map(RegistryEntry::value).toList())
-                        .orElseGet(() -> entryLookup.getOptional(tag)
-                            .map(named -> ((RegistryEntryListNamedAccessor<E>) named).callGetEntries())
-                            .map(entries -> entries.stream().map(RegistryEntry::value).toList())
-                            .orElse(null));
+                    Optional<RegistryEntryList.Named<E>> entries = entryLookup.getOptional(tag);
 
-                    if (required && tagValues == null) {
+                    if (required && entries.isEmpty()) {
                         throw new DataException(DataException.Phase.READING, path, "Tag \"" + id + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
                     }
 
-                    else if (tagValues != null) {
-                        elementsByTag.computeIfAbsent(tag, k -> new ObjectOpenHashSet<>()).addAll(tagValues);
+                    else if (entries.isPresent()) {
+                        Collection<E> elements = elementsByTag.computeIfAbsent(tag, k -> new ObjectOpenHashSet<>());
+                        entries.stream()
+                            .map(registryEntries -> ((RegistryEntryListBackedAccessor<E>) registryEntries).callGetEntries())
+                            .flatMap(Collection::stream)
+                            .map(RegistryEntry::value)
+                            .forEach(elements::add);
                     }
 
                 }
 
                 else {
 
-                    RegistryKey<E> registryKey = RegistryKey.of(registryRef, id);
-                    E element = Calio.getRegistry(registryRef)
-                        .flatMap(registry -> registry.getOrEmpty(registryKey))
-                        .orElseGet(() -> entryLookup.getOptional(registryKey)
-                            .map(RegistryEntry.Reference::value)
-                            .orElse(null));
+                    RegistryKey<E> key = RegistryKey.of(registryRef, id);
+                    Optional<RegistryEntry.Reference<E>> entry = entryLookup.getOptional(key);
 
-                    if (required && element == null) {
-                        throw new DataException(DataException.Phase.READING, path, "Type \"" + id + "\" is not registered in registry \"" + registryRef.getValue() + "\"!");
+                    if (required && entry.isEmpty()) {
+                        throw new DataException(DataException.Phase.READING, path, "Type \"" + id + "\" is not registered in registry \"" + key.getRegistry() + "\"!");
                     }
 
-                    else if (element != null) {
-                        elements.add(element);
+                    else {
+                        entry.ifPresent(reference -> elementsByKey.put(key, reference.value()));
                     }
 
                 }
 
-                tagEntriesToAdd.add(tagEntry);
+                tagEntries.add(tagEntry);
 
             }
 
-            return new TagLike<>(registryRef, elements, elementsByTag, tagEntriesToAdd);
+            return new TagLike<>(registryRef, elementsByKey, elementsByTag, tagEntries);
 
         }
 
-    }
-
-    public static <E> SerializableDataType<TagLike<E>> dataType(RegistryKey<E> registryKey) {
-        return SerializableDataType.of(
-            new StrictCodec<>() {
-
-                private final RegistryKey<? extends Registry<E>> registryRef = registryKey.getRegistryRef();
-                private final SerializableDataType<Set<TagEntry>> listDataType = SerializableDataTypes.TAG_ENTRY.listOf().xmap(
-                    ObjectOpenHashSet::new,
-                    ObjectArrayList::new
-                );
-
-                @Override
-                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
-
-                    RegistryEntryLookup<E> entryLookup = Calio
-                        .getRegistryEntryLookup(ops, registryRef)
-                        .orElseThrow(() -> new IllegalStateException("Couldn't decode tag-like without access to registries!"));
-
-                    return listDataType.strictDecode(ops, input)
-                        .mapFirst(entries -> new Builder<>(registryRef, entries))
-                        .mapFirst(builder -> builder.build(entryLookup));
-
-                }
-
-                @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return listDataType.strictEncode(input.tagEntries, ops, prefix);
-                }
-
-            },
-            PacketCodec.of(
-                TagLike::write,
-                TagLike::read
-            )
-        );
-    }
-
-    public static <E> SerializableDataType<TagLike<E>> dataType(Registry<E> registry) {
-        return SerializableDataType.of(
-            new StrictCodec<>() {
-
-                private final SerializableDataType<Set<TagEntry>> listDataType = SerializableDataTypes.TAG_ENTRY.listOf().xmap(
-                    ObjectOpenHashSet::new,
-                    ObjectArrayList::new
-                );
-
-                @Override
-                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
-                    return listDataType.strictDecode(ops, input)
-                        .mapFirst(entries -> new Builder<>(registry.getKey(), entries))
-                        .mapFirst(builder -> builder.build(registry.getReadOnlyWrapper()));
-                }
-
-                @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return listDataType.strictEncode(input.tagEntries, ops, prefix);
-                }
-
-            },
-            PacketCodec.of(
-                TagLike::write,
-                TagLike::read
-            )
-        );
     }
 
 }

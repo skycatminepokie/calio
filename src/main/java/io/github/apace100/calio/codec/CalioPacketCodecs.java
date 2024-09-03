@@ -17,6 +17,8 @@ import net.minecraft.util.dynamic.Codecs;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.IntFunction;
 
 public class CalioPacketCodecs {
@@ -102,6 +104,8 @@ public class CalioPacketCodecs {
         PacketCodecs.BOOL, tagEntry -> ((TagEntryAccessor) tagEntry).isRequired(),
         TagEntry::new
     );
+
+    public static final PacketCodec<ByteBuf, Set<TagEntry>> TAG_ENTRY_SET = collection(HashSet::new, CalioPacketCodecs.TAG_ENTRY);
 
     public static <B extends ByteBuf, E, C extends Collection<E>> PacketCodec<B, C> collection(IntFunction<C> collectionFactory, PacketCodec<? super B, E> elementCodec) {
         return collection(collectionFactory, elementCodec, Integer.MAX_VALUE);

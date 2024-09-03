@@ -14,13 +14,17 @@ import io.github.apace100.calio.mixin.WeightedListAccessor;
 import io.github.apace100.calio.util.*;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.registry.Registry;
+import net.minecraft.registry.RegistryEntryLookup;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryOps;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.WeightedList;
@@ -904,12 +908,65 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         ));
     }
 
-    public static <T> SerializableDataType<TagLike<T>> tagLike(Registry<T> registry) {
-        return TagLike.dataType(registry);
+    private static final Supplier<SerializableDataType<Set<TagEntry>>> TAG_ENTRY_SET = Suppliers.memoize(() -> SerializableDataTypes.TAG_ENTRIES.xmap(
+        ObjectOpenHashSet::new,
+        ObjectArrayList::new
+    ));
+
+    public static <E> SerializableDataType<TagLike<E>> tagLike(Registry<E> registry) {
+        return lazy(() -> of(
+            new StrictCodec<>() {
+
+                @Override
+                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
+                    return TAG_ENTRY_SET.get().strictDecode(ops, input)
+                        .mapFirst(entries -> new TagLike.Builder<>(registry.getKey(), entries))
+                        .mapFirst(builder -> builder.build(registry.getReadOnlyWrapper()));
+                }
+
+                @Override
+                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return TAG_ENTRY_SET.get().strictEncode(input.entries(), ops, prefix);
+                }
+
+            },
+            PacketCodec.of(
+                TagLike::write,
+                TagLike::read
+            )
+        ));
     }
 
-    public static <T> SerializableDataType<TagLike<T>> tagLike(RegistryKey<T> registryKey) {
-        return TagLike.dataType(registryKey);
+    public static <E> SerializableDataType<TagLike<E>> tagLike(RegistryKey<E> registryKey) {
+        return lazy(() -> of(
+            new StrictCodec<>() {
+
+                private final RegistryKey<? extends Registry<E>> registryRef = registryKey.getRegistryRef();
+
+                @Override
+                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
+
+                    RegistryEntryLookup<E> entryLookup = Calio
+                        .getRegistryEntryLookup(ops, registryRef)
+                        .orElseThrow(() -> new IllegalStateException("Couldn't find registry \"" + registryKey.getRegistry() + "\"; " + (ops instanceof RegistryOps<T> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")));
+
+                    return TAG_ENTRY_SET.get().strictDecode(ops, input)
+                        .mapFirst(entries -> new TagLike.Builder<>(registryRef, entries))
+                        .mapFirst(builder -> builder.build(entryLookup));
+
+                }
+
+                @Override
+                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return TAG_ENTRY_SET.get().strictEncode(input.entries(), ops, prefix);
+                }
+
+            },
+            PacketCodec.of(
+                TagLike::write,
+                TagLike::read
+            )
+        ));
     }
 
     public static <T> SerializableDataType<Optional<T>> optional(SerializableDataType<T> dataType, boolean lenient) {

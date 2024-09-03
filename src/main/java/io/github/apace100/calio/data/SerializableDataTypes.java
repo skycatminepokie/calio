@@ -535,6 +535,10 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<TagKey<Biome>> BIOME_TAG = SerializableDataType.tagKey(RegistryKeys.BIOME);
 
+    public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.of(CalioCodecs.TAG_ENTRY, CalioPacketCodecs.TAG_ENTRY.cast());
+
+    public static final SerializableDataType<List<TagEntry>> TAG_ENTRIES = TAG_ENTRY.listOf();
+
     public static final SerializableDataType<TagLike<Item>> ITEM_TAG_LIKE = SerializableDataType.tagLike(Registries.ITEM);
 
     public static final SerializableDataType<TagLike<Block>> BLOCK_TAG_LIKE = SerializableDataType.tagLike(Registries.BLOCK);
@@ -546,8 +550,6 @@ public final class SerializableDataTypes {
     public static final SerializableDataType<RegistryKey<LootFunction>> ITEM_MODIFIER = SerializableDataType.registryKey(RegistryKeys.ITEM_MODIFIER);
 
     public static final SerializableDataType<RegistryKey<LootCondition>> PREDICATE = SerializableDataType.registryKey(RegistryKeys.PREDICATE);
-
-    public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.of(CalioCodecs.TAG_ENTRY, CalioPacketCodecs.TAG_ENTRY.cast());
 
     public static void init() {
 
