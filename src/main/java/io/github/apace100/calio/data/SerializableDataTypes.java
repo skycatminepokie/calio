@@ -432,7 +432,7 @@ public final class SerializableDataTypes {
             .add("nutrition", NON_NEGATIVE_INT)
             .add("saturation", FLOAT)
             .add("can_always_eat", BOOLEAN, false)
-            .add("eat_seconds", POSITIVE_FLOAT, 1.6F)
+            .add("eat_seconds", NON_NEGATIVE_FLOAT, 1.6F)
             .addSupplied("using_converts_to", SerializableDataType.optional(UNCOUNTED_ITEM_STACK, false), Optional::empty)
             .add("effect", FOOD_STATUS_EFFECT_ENTRY, null)
             .add("effects", FOOD_STATUS_EFFECT_ENTRIES, null),
