@@ -2,12 +2,12 @@ package io.github.apace100.calio.data;
 
 import com.google.common.base.Suppliers;
 import com.google.common.collect.BiMap;
-import com.google.common.collect.ImmutableList;
 import com.google.gson.*;
 import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
+import com.mojang.serialization.codecs.UnboundedMapCodec;
 import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.*;
 import io.github.apace100.calio.mixin.WeightedListAccessor;
@@ -20,7 +20,6 @@ import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryEntryLookup;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryOps;
 import net.minecraft.registry.entry.RegistryEntry;
@@ -28,8 +27,10 @@ import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.WeightedList;
+import net.minecraft.util.dynamic.NullOps;
 import net.minecraft.util.function.ValueLists;
 import org.apache.commons.lang3.EnumUtils;
+import org.apache.commons.lang3.function.TriFunction;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -40,25 +41,18 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @SuppressWarnings({"unused", "unchecked"})
-public class SerializableDataType<T> implements StrictCodec<T> {
+public class SerializableDataType<T> {
 
-    protected final StrictCodec<T> baseCodec;
-    protected final PacketCodec<RegistryByteBuf, T> packetCodec;
+    private final Codec<T> codec;
+    private final PacketCodec<RegistryByteBuf, T> packetCodec;
 
-    protected final String name;
-
-    public SerializableDataType(StrictCodec<T> baseCodec, PacketCodec<RegistryByteBuf, T> packetCodec, String name) {
-        this.baseCodec = baseCodec;
+    public SerializableDataType(Codec<T> codec, PacketCodec<RegistryByteBuf, T> packetCodec) {
+        this.codec = codec;
         this.packetCodec = packetCodec;
-        this.name = name;
     }
 
-    public SerializableDataType(StrictCodec<T> baseCodec) {
-        this(baseCodec, PacketCodecs.codec(baseCodec).cast());
-    }
-
-    public SerializableDataType(StrictCodec<T> baseCodec, PacketCodec<RegistryByteBuf, T> packetCodec) {
-        this(baseCodec, packetCodec, "SerializableDataType[" + baseCodec + "]");
+    public SerializableDataType(Codec<T> codec) {
+        this(codec, PacketCodecs.codec(codec).cast());
     }
 
     /**
@@ -70,99 +64,20 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         this(new JsonCodec<>(fromJson, toJson), PacketCodec.of((value, buf) -> send.accept(buf, value), receive::apply));
     }
 
-    @Override
-    public <T1> Pair<T, T1> strictDecode(DynamicOps<T1> ops, T1 input) {
-        return this.baseCodec().strictDecode(ops, input);
-    }
-
-    @Override
-    public <T1> T1 strictEncode(T input, DynamicOps<T1> ops, T1 prefix) {
-        return this.baseCodec().strictEncode(input, ops, prefix);
-    }
-
-    @Override
-    public SerializableDataType<List<T>> listOf() {
-        return this.listOf(0, Integer.MAX_VALUE);
-    }
-
-    @Override
-    public Codec<List<T>> sizeLimitedListOf(int maxSize) {
-        return this.listOf(0, maxSize);
-    }
-
-    @Override
-    public SerializableDataType<List<T>> listOf(int minSize, int maxSize) {
-        return new SerializableDataType<>(
-            new StrictCodec<>() {
-
-                private final StrictListCodec<T> listCodec = new StrictListCodec<>(baseCodec(), minSize, maxSize);
-
-                @Override
-                public <I> Pair<List<T>, I> strictDecode(DynamicOps<I> ops, I input) {
-
-                    if (ops.getList(input).isSuccess()) {
-                        return listCodec.strictDecode(ops, input);
-                    }
-
-                    else {
-                        return baseCodec().strictDecode(ops, input).mapFirst(ImmutableList::of);
-                    }
-
-                }
-
-                @Override
-                public <I> I strictEncode(List<T> input, DynamicOps<I> ops, I prefix) {
-                    return listCodec.strictEncode(input, ops, prefix);
-                }
-
-            },
-            CalioPacketCodecs.collection(ObjectArrayList::new, this.packetCodec())
-        );
-    }
-
-    @Override
-    public <S> SerializableDataType<S> xmap(Function<? super T, ? extends S> to, Function<? super S, ? extends T> from) {
-        return new SerializableDataType<>(
-            StrictCodec.super.xmap(to, from),
-            this.packetCodec().xmap(to, from)
-        );
-    }
-
-    @Override
-    public <S> SerializableDataType<S> comapFlatMap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends T> from) {
-        return new SerializableDataType<>(
-            StrictCodec.super.comapFlatMap(to, from),
-            this.packetCodec().xmap(t -> to.apply(t).getOrThrow(), from)
-        );
-    }
-
-    @Override
-    public <S> SerializableDataType<S> flatComapMap(Function<? super T, ? extends S> to, Function<? super S, ? extends DataResult<? extends T>> from) {
-        return new SerializableDataType<>(
-            StrictCodec.super.flatComapMap(to, from),
-            this.packetCodec().xmap(to, s -> from.apply(s).getOrThrow())
-        );
-    }
-
-    @Override
-    public <S> SerializableDataType<S> flatXmap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends DataResult<? extends T>> from) {
-        return new SerializableDataType<>(
-            StrictCodec.super.flatXmap(to, from),
-            this.packetCodec().xmap(t -> to.apply(t).getOrThrow(), s -> from.apply(s).getOrThrow())
-        );
-    }
-
-    @Override
-    public String toString() {
-        return name;
-    }
-
-    protected StrictCodec<T> baseCodec() {
-        return baseCodec;
+    public Codec<T> codec() {
+        return codec;
     }
 
     public PacketCodec<RegistryByteBuf, T> packetCodec() {
         return packetCodec;
+    }
+
+    public <I> T read(DynamicOps<I> ops, I input) {
+        return this.codec().parse(ops, input).getOrThrow();
+    }
+
+    public <I> I write(DynamicOps<I> ops, T input) {
+        return this.codec().encodeStart(ops, input).getOrThrow();
     }
 
     public T receive(RegistryByteBuf buf) {
@@ -174,15 +89,15 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     /**
-     *  Use {@link #strictDecode(DynamicOps, Object)} with {@link JsonOps#INSTANCE} instead.
+     *  Use {@link #read(DynamicOps, Object)} with {@link JsonOps#INSTANCE} instead.
      */
     @Deprecated
     public T read(JsonElement jsonElement) {
-        return this.strictParse(JsonOps.INSTANCE, jsonElement);
+        return read(JsonOps.INSTANCE, jsonElement);
     }
 
     /**
-     *  Use {@link #strictEncodeStart(DynamicOps, T)} with {@link JsonOps#INSTANCE} instead.
+     *  Use {@link #write(DynamicOps, T)} with {@link JsonOps#INSTANCE} instead.
      */
     @Deprecated
     public JsonElement writeUnsafely(Object value) throws Exception {
@@ -198,15 +113,43 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     /**
-     *  Use {@link #strictEncodeStart(DynamicOps, T)} with {@link JsonOps#INSTANCE} instead.
+     *  Use {@link #write(DynamicOps, T)} with {@link JsonOps#INSTANCE} instead.
      */
     @Deprecated
     public JsonElement write(T value) {
-        return this.strictEncodeStart(JsonOps.INSTANCE, value);
+        return write(JsonOps.INSTANCE, value);
     }
 
     public T cast(Object data) {
         return (T) data;
+    }
+
+    public <S> SerializableDataType<S> xmap(Function<? super T, ? extends S> to, Function<? super S, ? extends T> from) {
+        return new SerializableDataType<>(codec().xmap(to, from), packetCodec().xmap(to, from));
+    }
+
+    public <S> SerializableDataType<S> comapFlatMap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends T> from) {
+        return new SerializableDataType<>(codec().comapFlatMap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), from));
+    }
+
+    public <S> SerializableDataType<S> flatComapMap(Function<? super T, ? extends S> to, Function<? super S, ? extends DataResult<? extends T>> from) {
+        return new SerializableDataType<>(codec().flatComapMap(to, from), packetCodec().xmap(to, s -> from.apply(s).getOrThrow()));
+    }
+
+    public <S> SerializableDataType<S> flatXmap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends DataResult<? extends T>> from) {
+        return new SerializableDataType<>(codec().flatXmap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), s -> from.apply(s).getOrThrow()));
+    }
+
+    public SerializableDataType<List<T>> list() {
+        return list(this);
+    }
+
+    public SerializableDataType<List<T>> list(int max) {
+        return list(this, max);
+    }
+
+    public SerializableDataType<List<T>> list(int min, int max) {
+        return list(this, min, max);
     }
 
     public SerializableDataType<Optional<T>> optional() {
@@ -221,44 +164,32 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return optional(this, true, warningHandler);
     }
 
+    public SerializableDataType<T> setRoot(boolean root) {
+        return this;
+    }
+
+    public SerializableData.Field<T> field(String name) {
+        return new SerializableData.FieldImpl<>(name, setRoot(false));
+    }
+
+    public SerializableData.Field<T> field(String name, Supplier<T> defaultSupplier) {
+        return new SerializableData.OptionalFieldImpl<>(name, setRoot(false), defaultSupplier);
+    }
+
+    public SerializableData.Field<T> functionedField(String name, Function<SerializableData.Instance, T> defaultFunction) {
+        return new SerializableData.FunctionedFieldImpl<>(name, setRoot(false), defaultFunction);
+    }
+
     public static <T> SerializableDataType<T> of(Codec<T> codec) {
-        return switch (codec) {
-            case SerializableDataType<T> selfDataType ->
-                selfDataType;
-            case StrictCodec<T> selfStrictCodec ->
-                new SerializableDataType<>(selfStrictCodec);
-            default ->
-                new SerializableDataType<>(StrictCodec.of(codec));
-        };
+        return new SerializableDataType<>(codec);
     }
 
     public static <T> SerializableDataType<T> of(Codec<T> codec, PacketCodec<RegistryByteBuf, T> packetCodec) {
-
-        StrictCodec<T> strictCodec = codec instanceof StrictCodec<T> selfStrictCodec
-            ? selfStrictCodec
-            : StrictCodec.of(codec);
-
-        return new SerializableDataType<>(strictCodec, packetCodec);
-
+        return new SerializableDataType<>(codec, packetCodec);
     }
 
     public static <T> SerializableDataType<T> jsonBacked(BiConsumer<RegistryByteBuf, T> send, Function<RegistryByteBuf, T> receive, Function<T, JsonElement> toJson, Function<JsonElement, T> fromJson) {
-        return new SerializableDataType<>(
-            new JsonCodec<>(fromJson, toJson),
-            new PacketCodec<>() {
-
-                @Override
-                public T decode(RegistryByteBuf buf) {
-                    return receive.apply(buf);
-                }
-
-                @Override
-                public void encode(RegistryByteBuf buf, T value) {
-                    send.accept(buf, value);
-                }
-
-            }
-        );
+        return new SerializableDataType<>(new JsonCodec<>(fromJson, toJson), PacketCodec.ofStatic(send::accept, receive::apply));
     }
 
     public static <T> RecursiveSerializableDataType<T> recursive(Function<SerializableDataType<T>, SerializableDataType<T>> wrapped) {
@@ -269,12 +200,16 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return recursive(self -> delegate.get());
     }
 
-    /**
-     *  Use any of {@link #listOf()}, {@link #listOf(int, int)}, or {@link #sizeLimitedListOf(int)} instead.
-     */
-    @Deprecated
-    public static <T> SerializableDataType<List<T>> list(SerializableDataType<T> singleDataType) {
-        return singleDataType.listOf(0, Integer.MAX_VALUE);
+    public static <T> SerializableDataTypeList<T> list(SerializableDataType<T> singleDataType) {
+        return list(singleDataType, Integer.MAX_VALUE);
+    }
+
+    public static <T> SerializableDataTypeList<T> list(SerializableDataType<T> singleDataType, int max) {
+        return list(singleDataType, 0, max);
+    }
+
+    public static <T> SerializableDataTypeList<T> list(SerializableDataType<T> singleDataType, int min, int max) {
+        return SerializableDataTypeList.of(singleDataType, min, max);
     }
 
     public static <T> SerializableDataType<WeightedList<T>> weightedList(SerializableDataType<T> singleDataType) {
@@ -287,20 +222,14 @@ public class SerializableDataType<T> implements StrictCodec<T> {
                 data.get("element"),
                 data.get("weight")
             ),
-            (entry, data) -> data
+            (entry, serializableData) -> serializableData.instance()
                 .set("element", entry.getElement())
                 .set("weight", entry.getWeight())
         );
 
-        return new SerializableDataType<>(
-            entryDataType.listOf().xmap(
-                WeightedList::new,
-                weightedList -> new ArrayList<>(((WeightedListAccessor<T>) weightedList).getEntries())
-            ),
-            CalioPacketCodecs.collection(ArrayList::new, entryDataType.packetCodec()).xmap(
-                WeightedList::new,
-                weightedList -> new ArrayList<>(((WeightedListAccessor<T>) weightedList).getEntries())
-            )
+        return entryDataType.list().xmap(
+            WeightedList::new,
+            weightedList -> new ObjectArrayList<>(((WeightedListAccessor<T>) weightedList).getEntries())
         );
 
     }
@@ -353,7 +282,7 @@ public class SerializableDataType<T> implements StrictCodec<T> {
      */
     @Deprecated
     public static <T> SerializableDataType<T> registry(Class<T> dataClass, Registry<T> registry, String defaultNamespace, @Nullable IdentifierAlias aliases, BiFunction<Registry<T>, Identifier, RuntimeException> exception) {
-        return registry(registry, defaultNamespace, aliases, exception);
+        return registry(registry, defaultNamespace, aliases, (_registry, id) -> exception.apply(_registry, id).getMessage());
     }
 
     public static <T> SerializableDataType<T> registry(Registry<T> registry) {
@@ -371,38 +300,36 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     public static <T> SerializableDataType<T> registry(Registry<T> registry, String defaultNamespace, boolean showPossibleValues) {
         return registry(registry, defaultNamespace, null, (reg, id) -> {
             String possibleValues = showPossibleValues ? " Expected value to be any of " + String.join(", ", reg.getIds().stream().map(Identifier::toString).toList()) : "";
-            return new IllegalArgumentException("Type \"%s\" is not registered in registry \"%s\".%s".formatted(id, registry.getKey().getValue(), possibleValues));
+            return "Type \"%s\" is not registered in registry \"%s\".%s".formatted(id, registry.getKey().getValue(), possibleValues);
         });
     }
 
-    public static <T> SerializableDataType<T> registry(Registry<T> registry, BiFunction<Registry<T>, Identifier, RuntimeException> exception) {
+    public static <T> SerializableDataType<T> registry(Registry<T> registry, BiFunction<Registry<T>, Identifier, String> exception) {
         return registry(registry, Identifier.DEFAULT_NAMESPACE, null, exception);
     }
 
-    public static <T> SerializableDataType<T> registry(Registry<T> registry, String defaultNamespace, @Nullable IdentifierAlias aliases, BiFunction<Registry<T>, Identifier, RuntimeException> exception) {
+    public static <T> SerializableDataType<T> registry(Registry<T> registry, String defaultNamespace, @Nullable IdentifierAlias aliases, BiFunction<Registry<T>, Identifier, String> exception) {
         return lazy(() -> new SerializableDataType<>(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 @Override
-                public <T1> Pair<T, T1> strictDecode(DynamicOps<T1> ops, T1 input) {
-
-                    Identifier id = ops.getStringValue(input)
-                        .map(str -> DynamicIdentifier.of(str, defaultNamespace))
-                        .getOrThrow();
-
-                    return registry
-                        .getOrEmpty(aliases == null ? id : aliases.resolveAlias(id, registry::containsId))
-                        .map(t -> Pair.of(t, input))
-                        .orElseThrow(() -> exception.apply(registry, id));
-
+                public <I> DataResult<Pair<T, I>> decode(DynamicOps<I> ops, I input) {
+                    return ops.getStringValue(input)
+                        .flatMap(str -> DynamicIdentifier.ofResult(str, defaultNamespace))
+                        .flatMap(id -> registry
+                            .getOrEmpty(aliases == null ? id : aliases.resolveAlias(id, registry::containsId))
+                            .map(t -> Pair.of(t, input))
+                            .map(DataResult::success)
+                            .orElse(DataResult.error(() -> exception.apply(registry, id))));
                 }
 
                 @Override
-                public <T1> T1 strictEncode(T input, DynamicOps<T1> ops, T1 prefix) {
+                public <I> DataResult<I> encode(T input, DynamicOps<I> ops, I prefix) {
                     return Optional.ofNullable(registry.getId(input))
                         .map(Identifier::toString)
                         .map(ops::createString)
-                        .orElseThrow(() -> new IllegalStateException("Entry '" + input + "' is not registered to registry \"" + registry.getKey().getValue() + "\""));
+                        .map(DataResult::success)
+                        .orElse(DataResult.error(() -> input + " is not registered in registry \"" + registry.getKey().getValue() + "\"!"));
                 }
 
             },
@@ -412,69 +339,82 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     /**
      *
-     *  <p>Use any of the following methods instead:</p>
+     *  <p>Use any of the following instead:</p>
      *
      *  <ul>
-     *      <li>{@link #compound(SerializableData, Function, BiConsumer)} for normal processing</li>
-     *      <li>{@link #compound(SerializableData, BiFunction, BiConsumer)} for processing with an unknown {@link DynamicOps}</li>
+     *      <li>{@link #compound(SerializableData, Function, BiFunction) compound(SerializableData, Function&lt;SerializableData.Instance, T&gt, BiFunction&lt;T, SerializableData, SerializableData.Instance&gt;)} for normal processing.</li>
+     *      <li>{@link #compound(SerializableData, Function, BiFunction) compound(SerializableData, BiFunction&lt;DynamicOps&lt;?&gt;, SerializableData.Instance, T&gt;, TriFunction&lt;T, DynamicOps&lt;?&gt;, SerializableData, SerializableData.Instance&gt;)} for processing with an unknown {@link DynamicOps}.</li>
+     *      <li>{@link CompoundSerializableDataType#CompoundSerializableDataType(SerializableData, Function, BiFunction) CompoundSerializableDataType(SerializableData, Function&lt;SerializableData, CompoundCodec&lt;T&gt;&gt;, BiFunction&lt;SerializableData, CompoundCodec&lt;T&gt;, PacketCodec&lt;RegistryByteBuf, T&gt;&gt;)} for more granular control on how the element will be decoded/encoded.</li>
      *  </ul>
+     *
      */
     @Deprecated
-    public static <T> SerializableDataType<T> compound(Class<T> dataClass, SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiFunction<SerializableData, T, SerializableData.Instance> toData) {
-        return new SerializableDataType<>(
-            new StrictCodec<>() {
+    public static <T> CompoundSerializableDataType<T> compound(Class<T> dataClass, SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiFunction<SerializableData, T, SerializableData.Instance> toData) {
+        return compound(serializableData, fromData, (t, _serializableData) -> toData.apply(_serializableData, t));
+    }
 
-                @Override
-                public <I> Pair<T, I> strictDecode(DynamicOps<I> ops, I input) {
+    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiFunction<T, SerializableData, SerializableData.Instance> toData) {
+        return compound(serializableData, (ops, data) -> fromData.apply(data), (t, ops, _serializableData) -> toData.apply(t, _serializableData));
+    }
 
-                    MapLike<I> mapInput = ops.getMap(input).getOrThrow();
-                    SerializableData.Instance data = serializableData.strictDecode(ops, mapInput);
+    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, BiFunction<DynamicOps<?>, SerializableData.Instance, T> fromData, TriFunction<T, DynamicOps<?>, SerializableData, SerializableData.Instance> toData) {
+        return new CompoundSerializableDataType<>(
+            serializableData,
+            _serializableData -> new CompoundMapCodec<>() {
 
-                    return Pair.of(fromData.apply(data), input);
+				@Override
+				public <I> T fromData(DynamicOps<I> ops, SerializableData.Instance data) {
+					return fromData.apply(ops, data);
+				}
 
-                }
+				@Override
+				public <I> SerializableData.Instance toData(T input, DynamicOps<I> ops, SerializableData serializableData) {
+					return toData.apply(input, ops, serializableData);
+				}
 
-                @Override
-                public <I> I strictEncode(T input, DynamicOps<I> ops, I prefix) {
-                    SerializableData.Instance data = toData.apply(serializableData, input);
-                    return serializableData.codec().strictEncodeStart(ops, data);
-                }
+				@Override
+				public <I> Stream<I> keys(DynamicOps<I> ops) {
+					return _serializableData.keys(ops);
+				}
 
-            },
-            new PacketCodec<>() {
+				@Override
+				public <I> DataResult<T> decode(DynamicOps<I> ops, MapLike<I> input) {
+					return _serializableData.decode(ops, input)
+						.map(data -> this.fromData(ops, data));
+				}
 
-                @Override
-                public T decode(RegistryByteBuf buf) {
-                    return fromData.apply(serializableData.receive(buf));
-                }
+				@Override
+				public <I> RecordBuilder<I> encode(T input, DynamicOps<I> ops, RecordBuilder<I> prefix) {
+					SerializableData.Instance data = this.toData(input, ops, _serializableData);
+					return _serializableData.encode(data, ops, prefix);
+				}
 
-                @Override
-                public void encode(RegistryByteBuf buf, T value) {
-                    serializableData.send(buf, toData.apply(serializableData, value));
-                }
+			},
+            (_serializableData, compoundMapCodec) -> new PacketCodec<>() {
 
-            }
+				@Override
+				public T decode(RegistryByteBuf buf) {
+					SerializableData.Instance data = _serializableData.receive(buf);
+                    return compoundMapCodec.fromData(buf.getRegistryManager().getOps(NullOps.INSTANCE), data);
+				}
+
+				@Override
+				public void encode(RegistryByteBuf buf, T value) {
+                    SerializableData.Instance data = compoundMapCodec.toData(value, buf.getRegistryManager().getOps(NullOps.INSTANCE), _serializableData);
+                    _serializableData.send(buf, data);
+				}
+
+			}
         );
-    }
-
-    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiConsumer<T, SerializableData.Instance> toData) {
-        return CompoundSerializableDataType.of(serializableData, fromData, toData);
-    }
-
-    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData, BiConsumer<T, SerializableData.Instance> toData) {
-        return CompoundSerializableDataType.of(serializableData, fromData, toData);
     }
 
     public static <V> SerializableDataType<Map<String, V>> map(SerializableDataType<V> valueDataType) {
-        return map(
-            of(Codec.STRING, PacketCodecs.STRING.cast()),
-            valueDataType
-        );
+        return lazy(() -> map(SerializableDataTypes.STRING, valueDataType));
     }
 
     public static <K, V> SerializableDataType<Map<K, V>> map(SerializableDataType<K> keyDataType, SerializableDataType<V> valueDataType) {
         return new SerializableDataType<>(
-            new StrictUnboundedMapCodec<>(keyDataType, valueDataType),
+            new UnboundedMapCodec<>(keyDataType.codec(), valueDataType.codec()),
             PacketCodec.ofStatic(
                 (buf, map) -> {
 
@@ -518,45 +458,76 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return mapped(Suppliers.memoize(() -> biMap));
     }
 
-    public static <V> SerializableDataType<V> mapped(Supplier<BiMap<String, V>> biMapSupplier) {
+    public static <V> SerializableDataType<V> mapped(Supplier<BiMap<String, V>> acceptedValuesSupplier) {
         return new SerializableDataType<>(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 @Override
-                public <T> Pair<V, T> strictDecode(DynamicOps<T> ops, T input) {
+                public <T> DataResult<Pair<V, T>> decode(DynamicOps<T> ops, T input) {
+                    return ops.getStringValue(input)
+                        .flatMap(stringInput -> {
 
-                    String inputString = ops
-                        .getStringValue(input)
-                        .getOrThrow();
+                            BiMap<String, V> acceptedValues = acceptedValuesSupplier.get();
+                            V value = acceptedValues.get(stringInput);
 
-                    BiMap<String, V> biMap = biMapSupplier.get();
-                    if (biMap.containsKey(inputString)) {
-                        return Pair.of(biMap.get(inputString), input);
-                    } else {
-                        throw new IllegalArgumentException("Expected value to be any of " + String.join(", ", biMap.keySet()));
-                    }
+                            if (acceptedValues.containsKey(stringInput)) {
+                                return DataResult.success(Pair.of(value, input));
+                            }
 
+                            else {
+                                return DataResult.error(() -> "Expected value to be any of " + String.join(", ", acceptedValues.keySet()));
+                            }
+
+                        });
                 }
 
                 @Override
-                public <T> T strictEncode(V input, DynamicOps<T> ops, T prefix) {
+                public <T> DataResult<T> encode(V input, DynamicOps<T> ops, T prefix) {
 
-                    BiMap<String, V> biMap = biMapSupplier.get();
-                    String inputString = biMap.inverse().get(input);
+                    BiMap<String, V> acceptedValues = acceptedValuesSupplier.get();
+                    String key = acceptedValues.inverse().get(input);
 
-                    return ops.createString(inputString);
+                    if (key != null) {
+                        return DataResult.success(ops.createString(key));
+                    }
+
+                    else {
+                        return DataResult.error(() -> "Element " + input + " is not associated with any keys!");
+                    }
 
                 }
 
             },
             PacketCodec.ofStatic(
                 (buf, value) -> {
-                    BiMap<String, V> biMap = biMapSupplier.get();
-                    buf.writeString(biMap.inverse().get(value));
+
+                    BiMap<String, V> acceptedValues = acceptedValuesSupplier.get();
+                    String key = acceptedValues.inverse().get(value);
+
+                    if (key != null) {
+                        buf.writeString(key);
+                    }
+
+                    else {
+                        throw new IllegalStateException("Element " + value + " is not associated with any keys!");
+                    }
+
                 },
                 buf -> {
-                    BiMap<String, V> biMap = biMapSupplier.get();
-                    return biMap.get(buf.readString());
+
+                    BiMap<String, V> acceptedValues = acceptedValuesSupplier.get();
+
+                    String key = buf.readString();
+                    V value = acceptedValues.get(key);
+
+                    if (acceptedValues.containsKey(key)) {
+                        return value;
+                    }
+
+                    else {
+                        throw new IllegalStateException("Expected value to be any of " + String.join(", ", acceptedValues.keySet()));
+                    }
+
                 }
             )
         );
@@ -580,59 +551,33 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     public static <T> SerializableDataType<TagKey<T>> tagKey(RegistryKey<? extends Registry<T>> registryRef) {
         return lazy(() -> new SerializableDataType<>(
-            new StrictCodec<>() {
-
-                @Override
-                public <I> Pair<TagKey<T>, I> strictDecode(DynamicOps<I> ops, I input) {
-
-                    Pair<TagKey<T>, I> tagAndInput = this.createTagKey(ops, input);
-                    TagKey<T> tag = tagAndInput.getFirst();
-
-                    if (Calio.getRegistryTags().map(tags -> tags.containsKey(tag)).orElse(false)) {
-                        return tagAndInput;
-                    }
-
-                    else {
-                        return Calio.getOptionalEntries(ops, tag)
-                            .map(registryEntries -> tagAndInput)
-                            .orElseThrow(() -> createError(tag));
-                    }
-
-                }
+            new Codec<>() {
 
                 @Override
                 public <I> DataResult<Pair<TagKey<T>, I>> decode(DynamicOps<I> ops, I input) {
+                    return SerializableDataTypes.IDENTIFIER.codec().decode(ops, input)
+                        .flatMap(idAndInput -> {
 
-                    Pair<TagKey<T>, I> tagAndInput = this.createTagKey(ops, input);
-                    TagKey<T> tag = tagAndInput.getFirst();
+                            Pair<TagKey<T>, I> tagAndInput = idAndInput.mapFirst(id -> TagKey.of(registryRef, id));
+                            TagKey<T> tag = tagAndInput.getFirst();
 
-                    if (Calio.getRegistryTags().map(tags -> tags.containsKey(tag)).orElse(false)) {
-                        return DataResult.success(tagAndInput);
-                    }
+                            if (Calio.getRegistryTags().map(tags -> tags.containsKey(tag)).orElse(false)) {
+                                return DataResult.success(tagAndInput);
+                            }
 
-                    else {
-                        return Calio.getOptionalEntries(ops, tag)
-                            .map(registryEntries -> tagAndInput)
-                            .map(DataResult::success)
-                            .orElseThrow(() -> createError(tag))
-                            .setPartial(tagAndInput);
-                    }
+                            else {
+                                return Calio.getOptionalEntries(ops, tag)
+                                    .map(entries -> tagAndInput)
+                                    .map(DataResult::success)
+                                    .orElse(DataResult.error(() -> "Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!"));
+                            }
 
+                        });
                 }
 
                 @Override
-                public <I> I strictEncode(TagKey<T> input, DynamicOps<I> ops, I prefix) {
-                    return SerializableDataTypes.IDENTIFIER.strictEncode(input.id(), ops, prefix);
-                }
-
-                private <I> Pair<TagKey<T>, I> createTagKey(DynamicOps<I> ops, I input) {
-                    return SerializableDataTypes.IDENTIFIER
-                        .strictDecode(ops, input)
-                        .mapFirst(id -> TagKey.of(registryRef, id));
-                }
-
-                private IllegalArgumentException createError(TagKey<T> tagKey) {
-                    return new IllegalArgumentException("Tag \"" + tagKey.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
+                public <I> DataResult<I> encode(TagKey<T> input, DynamicOps<I> ops, I prefix) {
+                    return SerializableDataTypes.IDENTIFIER.codec().encode(input.id(), ops, prefix);
                 }
 
             },
@@ -643,28 +588,31 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         ));
     }
 
-    public static <T> SerializableDataType<RegistryEntry<T>> registryEntry(Registry<T> registry) {
+    public static <A> SerializableDataType<RegistryEntry<A>> registryEntry(Registry<A> registry) {
         return lazy(() -> new SerializableDataType<>(
-            new StrictCodec<>() {
+            new Codec<>() {
 
-                private final RegistryKey<? extends Registry<T>> registryRef = registry.getKey();
-                private final SerializableDataType<RegistryKey<T>> keyDataType = registryKey(registryRef);
+                private final RegistryKey<? extends Registry<A>> registryRef = registry.getKey();
+                private final SerializableDataType<RegistryKey<A>> keyDataType = registryKey(registryRef);
 
                 @Override
-                public <I> Pair<RegistryEntry<T>, I> strictDecode(DynamicOps<I> ops, I input) {
-                    RegistryKey<T> key = keyDataType.strictParse(ops, input);
-                    return registry.getEntry(key)
-                        .map(entry -> Pair.of((RegistryEntry<T>) entry, input))
-                        .orElseThrow();
+                public <T> DataResult<Pair<RegistryEntry<A>, T>> decode(DynamicOps<T> ops, T input) {
+                    return keyDataType.codec().parse(ops, input)
+                        .flatMap(key -> registry.getEntry(key)
+                            .map(entry -> (RegistryEntry<A>) entry)
+                            .map(entry -> Pair.of(entry, input))
+                            .map(DataResult::success)
+                            .orElseThrow());
                 }
 
                 @Override
-                public <I> I strictEncode(RegistryEntry<T> input, DynamicOps<I> ops, I prefix) {
+                public <T> DataResult<T> encode(RegistryEntry<A> input, DynamicOps<T> ops, T prefix) {
                     return input.getKey()
                         .map(RegistryKey::getValue)
                         .map(Identifier::toString)
                         .map(ops::createString)
-                        .orElseThrow(() -> new IllegalStateException("Entry \"" + input + "\" is not registered in registry \"" + registryRef.getValue() + "\"!"));
+                        .map(DataResult::success)
+                        .orElse(DataResult.error(() -> input + " is not registered in registry \"" + registryRef.getValue() + "\"!"));
                 }
 
             },
@@ -678,59 +626,33 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     public static <T> SerializableDataType<RegistryKey<T>> registryKey(RegistryKey<? extends Registry<T>> registryRef, Collection<RegistryKey<T>> exemptions) {
         return lazy(() -> new SerializableDataType<>(
-            new StrictCodec<>() {
-
-                @Override
-                public <I> Pair<RegistryKey<T>, I> strictDecode(DynamicOps<I> ops, I input) {
-
-                    Pair<RegistryKey<T>, I> keyAndInput = this.createRegistryKey(ops, input);
-                    RegistryKey<T> key = keyAndInput.getFirst();
-
-                    if (exemptions.contains(key)) {
-                        return keyAndInput;
-                    }
-
-                    else {
-                        return Calio.getOptionalEntry(ops, key)
-                            .map(reference -> keyAndInput)
-                            .orElseThrow(() -> createError(key));
-                    }
-
-                }
+            new Codec<>() {
 
                 @Override
                 public <I> DataResult<Pair<RegistryKey<T>, I>> decode(DynamicOps<I> ops, I input) {
+                    return SerializableDataTypes.IDENTIFIER.codec().decode(ops, input)
+                        .flatMap(idAndInput -> {
 
-                    Pair<RegistryKey<T>, I> keyAndInput = createRegistryKey(ops, input);
-                    RegistryKey<T> key = keyAndInput.getFirst();
+                            Pair<RegistryKey<T>, I> keyAndInput = idAndInput.mapFirst(id -> RegistryKey.of(registryRef, id));
+                            RegistryKey<T> key = keyAndInput.getFirst();
 
-                    if (exemptions.contains(key)) {
-                        return DataResult.success(keyAndInput);
-                    }
+                            if (exemptions.contains(key)) {
+                                return DataResult.success(keyAndInput);
+                            }
 
-                    else {
-                        return Calio.getOptionalEntry(ops, key)
-                            .map(reference -> keyAndInput)
-                            .map(DataResult::success)
-                            .orElseThrow(() -> createError(key))
-                            .setPartial(keyAndInput);
-                    }
+                            else {
+                                return Calio.getOptionalEntry(ops, key)
+                                    .map(entries -> keyAndInput)
+                                    .map(DataResult::success)
+                                    .orElse(DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!"));
+                            }
 
+                        });
                 }
 
                 @Override
-                public <I> I strictEncode(RegistryKey<T> input, DynamicOps<I> ops, I prefix) {
-                    return SerializableDataTypes.IDENTIFIER.strictEncode(input.getValue(), ops, prefix);
-                }
-
-                private <I> Pair<RegistryKey<T>, I> createRegistryKey(DynamicOps<I> ops, I input) {
-                    return SerializableDataTypes.IDENTIFIER
-                        .strictDecode(ops, input)
-                        .mapFirst(id -> RegistryKey.of(registryRef, id));
-                }
-
-                private IllegalArgumentException createError(RegistryKey<T> registryKey) {
-                    return new IllegalArgumentException("Type \"" + registryKey.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!");
+                public <I> DataResult<I> encode(RegistryKey<T> input, DynamicOps<I> ops, I prefix) {
+                    return SerializableDataTypes.IDENTIFIER.codec().encode(input.getValue(), ops, prefix);
                 }
 
             },
@@ -758,68 +680,57 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     @ApiStatus.Internal
     private static <E extends Enum<E>> SerializableDataType<E> enumValueInternal(Class<E> enumClass, Supplier<Map<String, E>> additionalMapSupplier) {
-        IntFunction<E> ordinalToEnum = ValueLists.createIdToValueFunction((ToIntFunction<E>) Enum::ordinal, enumClass.getEnumConstants(), ValueLists.OutOfBoundsHandling.WRAP);
+        IntFunction<E> ordinalToEnum = ValueLists.createIdToValueFunction((ToIntFunction<E>) Enum::ordinal, enumClass.getEnumConstants(), ValueLists.OutOfBoundsHandling.CLAMP);
         return new SerializableDataType<>(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 @Override
-                public <I> I strictEncode(E input, DynamicOps<I> ops, I prefix) {
-                    return ops.createString(input.name());
-                }
+                public <T> DataResult<Pair<E, T>> decode(DynamicOps<T> ops, T input) {
 
-                @Override
-                public <I> Pair<E, I> strictDecode(DynamicOps<I> ops, I input) {
+                    DataResult<Pair<E, T>> enumResult = ops.getNumberValue(input)
+                        .map(Number::intValue)
+                        .map(ordinalToEnum::apply)
+                        .map(e -> Pair.of(e, input));
 
-                    Map<String, E> additionalMap = additionalMapSupplier.get();
-                    E[] enumValues = enumClass.getEnumConstants();
-
-                    int enumsSize = enumValues.length;
-                    DataResult<Number> ordinalInput = ops.getNumberValue(input);
-
-                    if (ordinalInput.isSuccess()) {
-
-                        int ordinal = ordinalInput
-                            .map(Number::intValue)
-                            .getOrThrow();
-
-                        if (ordinal < 0 || ordinal >= enumsSize) {
-                            throw new IllegalStateException("Expected ordinal to be within the range of 0 to " + (enumsSize - 1) + " (current value: " + ordinal + ")");
-                        }
-
-                        else {
-                            return Pair.of(enumValues[ordinal], input);
-                        }
-
+                    if (enumResult.isSuccess()) {
+                        return enumResult;
                     }
 
                     else {
+                        return ops.getStringValue(input)
+                            .flatMap(stringInput -> {
 
-                        String name = ops.getStringValue(input)
-                            .getOrThrow()
-                            .toUpperCase(Locale.ROOT);
+                                Map<String, E> additionalMap = additionalMapSupplier.get();
+                                E[] enumValues = enumClass.getEnumConstants();
 
-                        if (additionalMap.containsKey(name)) {
-                            return Pair.of(additionalMap.get(name), input);
-                        }
+                                if (additionalMap.containsKey(stringInput)) {
+                                    return DataResult.success(Pair.of(additionalMap.get(stringInput), input));
+                                }
 
-                        try {
-                            E enumValue = EnumUtils.getEnumIgnoreCase(enumClass, name);
-                            return Pair.of(Objects.requireNonNull(enumValue), input);
-                        }
+                                E queriedEnum = EnumUtils.getEnumIgnoreCase(enumClass, stringInput);
+                                if (queriedEnum != null) {
+                                    return DataResult.success(Pair.of(queriedEnum, input));
+                                }
 
-                        catch (Exception ignored) {
+                                else {
 
-                            Set<String> validValues = new LinkedHashSet<>();
+                                    Set<String> validValues = new LinkedHashSet<>();
 
-                            Stream.of(enumValues).map(Enum::name).forEach(validValues::add);
-                            validValues.addAll(additionalMap.keySet());
+                                    Stream.of(enumValues).map(Enum::name).forEach(validValues::add);
+                                    validValues.addAll(additionalMap.keySet());
 
-                            throw new IllegalArgumentException("Expected value to be any of: " + String.join(", ", validValues) + " (case-insensitive)");
+                                    return DataResult.error(() -> "Expected value to be any of: " + String.join(", ", validValues) + " (case-insensitive)");
 
-                        }
+                                }
 
+                            });
                     }
 
+                }
+
+                @Override
+                public <T> DataResult<T> encode(E input, DynamicOps<T> ops, T prefix) {
+                    return DataResult.success(ops.createString(input.name()));
                 }
 
             },
@@ -836,15 +747,9 @@ public class SerializableDataType<T> implements StrictCodec<T> {
     }
 
     public static <E extends Enum<E>> SerializableDataType<EnumSet<E>> enumSet(SerializableDataType<E> enumDataType) {
-        return new SerializableDataType<>(
-            enumDataType.listOf(1, Integer.MAX_VALUE).xmap(
-                EnumSet::copyOf,
-                LinkedList::new
-            ),
-            CalioPacketCodecs.collection(HashSet::new, enumDataType.packetCodec()).xmap(
-                EnumSet::copyOf,
-                HashSet::new
-            )
+        return enumDataType.list(1, Integer.MAX_VALUE).xmap(
+            EnumSet::copyOf,
+            ObjectArrayList::new
         );
     }
 
@@ -927,18 +832,19 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     public static <E> SerializableDataType<TagLike<E>> tagLike(Registry<E> registry) {
         return lazy(() -> of(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 @Override
-                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
-                    return TAG_ENTRY_SET.get().strictDecode(ops, input)
-                        .mapFirst(entries -> new TagLike.Builder<>(registry.getKey(), entries))
-                        .mapFirst(builder -> builder.build(registry.getReadOnlyWrapper()));
+                public <T> DataResult<Pair<TagLike<E>, T>> decode(DynamicOps<T> ops, T input) {
+                    return TAG_ENTRY_SET.get().codec().decode(ops, input)
+                        .map(entriesAndInput -> entriesAndInput
+                            .mapFirst(entries -> new TagLike.Builder<>(registry.getKey(), entries))
+                            .mapFirst(builder -> builder.build(registry.getReadOnlyWrapper())));
                 }
 
                 @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return TAG_ENTRY_SET.get().strictEncode(input.entries(), ops, prefix);
+                public <T> DataResult<T> encode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return TAG_ENTRY_SET.get().codec().encode(input.entries(), ops, prefix);
                 }
 
             },
@@ -951,26 +857,23 @@ public class SerializableDataType<T> implements StrictCodec<T> {
 
     public static <E> SerializableDataType<TagLike<E>> tagLike(RegistryKey<E> registryKey) {
         return lazy(() -> of(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 private final RegistryKey<? extends Registry<E>> registryRef = registryKey.getRegistryRef();
 
                 @Override
-                public <T> Pair<TagLike<E>, T> strictDecode(DynamicOps<T> ops, T input) {
-
-                    RegistryEntryLookup<E> entryLookup = Calio
-                        .getRegistryEntryLookup(ops, registryRef)
-                        .orElseThrow(() -> new IllegalStateException("Couldn't find registry \"" + registryKey.getRegistry() + "\"; " + (ops instanceof RegistryOps<T> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")));
-
-                    return TAG_ENTRY_SET.get().strictDecode(ops, input)
-                        .mapFirst(entries -> new TagLike.Builder<>(registryRef, entries))
-                        .mapFirst(builder -> builder.build(entryLookup));
-
+                public <T> DataResult<Pair<TagLike<E>, T>> decode(DynamicOps<T> ops, T input) {
+                    return Calio.getRegistryEntryLookup(ops, registryRef)
+                        .map(entryLookup -> TAG_ENTRY_SET.get().codec().decode(ops, input)
+                            .map(entriesAndInput -> entriesAndInput
+                                .mapFirst(entries -> new TagLike.Builder<>(registryRef, entries))
+                                .mapFirst(builder -> builder.build(entryLookup))))
+                        .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\"; " + (ops instanceof RegistryOps<T> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")));
                 }
 
                 @Override
-                public <T> T strictEncode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
-                    return TAG_ENTRY_SET.get().strictEncode(input.entries(), ops, prefix);
+                public <T> DataResult<T> encode(TagLike<E> input, DynamicOps<T> ops, T prefix) {
+                    return TAG_ENTRY_SET.get().codec().encode(input.entries(), ops, prefix);
                 }
 
             },
@@ -985,42 +888,43 @@ public class SerializableDataType<T> implements StrictCodec<T> {
         return optional(dataType, lenient, warn -> {});
     }
 
-    public static <T> SerializableDataType<Optional<T>> optional(SerializableDataType<T> dataType, boolean lenient, Consumer<String> warningHandler) {
+    public static <A> SerializableDataType<Optional<A>> optional(SerializableDataType<A> dataType, boolean lenient, Consumer<String> warningHandler) {
         return of(
-            new StrictCodec<>() {
+            new Codec<>() {
 
                 @Override
-                public <I> Pair<Optional<T>, I> strictDecode(DynamicOps<I> ops, I input) {
+                public <T> DataResult<Pair<Optional<A>, T>> decode(DynamicOps<T> ops, T input) {
+                    return dataType.codec().decode(ops, input)
+                        .map(aAndInput -> aAndInput.mapFirst(Optional::of))
+                        .mapOrElse(
+							DataResult::success,
+                            error -> {
 
-                    try {
-                        return dataType.strictDecode(ops, input).mapFirst(Optional::of);
-                    }
+                                if (lenient) {
+                                    warningHandler.accept(error.message());
+                                    return DataResult.success(Pair.of(Optional.empty(), input));
+                                }
 
-                    catch (Exception e) {
+                                else {
+                                    return error;
+                                }
 
-                        if (lenient) {
-                            warningHandler.accept(e.getMessage());
-                            return Pair.of(Optional.empty(), input);
-                        }
-
-                        else {
-                            throw e;
-                        }
-
-                    }
-
+                            }
+                        );
                 }
 
                 @Override
-                public <I> I strictEncode(Optional<T> input, DynamicOps<I> ops, I prefix) {
-                    return input.map(t -> dataType.strictEncodeStart(ops, t)).orElse(prefix);
+                public <T> DataResult<T> encode(Optional<A> input, DynamicOps<T> ops, T prefix) {
+                    return input
+                        .map(a -> dataType.codec().encodeStart(ops, a))
+                        .orElse(DataResult.success(prefix));
                 }
 
             },
             PacketCodec.ofStatic(
                 (buf, optional) -> {
                     buf.writeBoolean(optional.isPresent());
-                    optional.ifPresent(t -> dataType.send(buf, t));
+                    optional.ifPresent(a -> dataType.send(buf, a));
                 },
                 buf -> buf.readBoolean()
                     ? Optional.of(dataType.receive(buf))

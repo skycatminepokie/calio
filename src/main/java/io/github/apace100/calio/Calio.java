@@ -1,8 +1,8 @@
 package io.github.apace100.calio;
 
+import com.mojang.serialization.DataResult;
 import com.mojang.serialization.DynamicOps;
 import io.github.apace100.calio.codec.CalioCodecs;
-import io.github.apace100.calio.data.DataException;
 import io.github.apace100.calio.data.SerializableDataTypes;
 import io.github.apace100.calio.mixin.CachedRegistryInfoGetterAccessor;
 import io.github.apace100.calio.mixin.RegistryOpsAccessor;
@@ -86,6 +86,12 @@ public class Calio implements ModInitializer {
 
 	}
 
+	public static <F, T> DynamicOps<T> wrapRegistryOps(DynamicOps<F> fromOps, DynamicOps<T> toOps) {
+		return getWrapperLookup(fromOps)
+			.map(lookup -> (DynamicOps<T>) lookup.getOps(toOps))
+			.orElse(toOps);
+	}
+
 	public static <T> Optional<RegistryOps<T>> getRegistryOps(DynamicOps<T> ops) {
 
 		if (ops instanceof RegistryOps<T> regOps) {
@@ -96,10 +102,6 @@ public class Calio implements ModInitializer {
 			return getDynamicRegistries().map(drm -> drm.getOps(ops));
 		}
 
-	}
-
-	public static <F, T> Optional<RegistryOps<T>> convertToRegistryOps(DynamicOps<F> fromOps, DynamicOps<T> toOps) {
-		return getWrapperLookup(fromOps).map(wrapperLookup -> wrapperLookup.getOps(toOps));
 	}
 
 	public static <T> Optional<RegistryWrapper.WrapperLookup> getWrapperLookup(DynamicOps<T> ops) {
@@ -159,8 +161,8 @@ public class Calio implements ModInitializer {
 		return Optional.ofNullable(REGISTRY_TAGS.get());
 	}
 
-	public static DataException createMissingRequiredFieldError(String name) {
-		return new DataException(DataException.Phase.READING, name, "Field is required, but is missing!");
+	public static <R> DataResult<R> createMissingRequiredFieldError(String name) {
+		return DataResult.error(() -> "Required field \"" + name + "\" is missing!");
 	}
 
 }

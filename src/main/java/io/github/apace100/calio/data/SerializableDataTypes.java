@@ -7,7 +7,6 @@ import com.mojang.serialization.*;
 import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.CalioCodecs;
 import io.github.apace100.calio.codec.CalioPacketCodecs;
-import io.github.apace100.calio.codec.StrictCodec;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
 import io.github.apace100.calio.util.*;
 import net.minecraft.block.Block;
@@ -65,49 +64,49 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<Integer> INT = SerializableDataType.of(Codec.INT, PacketCodecs.INTEGER.cast());
 
-    public static final SerializableDataType<List<Integer>> INTS = INT.listOf();
+    public static final SerializableDataType<List<Integer>> INTS = INT.list();
 
     public static final SerializableDataType<Integer> POSITIVE_INT = SerializableDataType.boundNumber(INT, 1, Integer.MAX_VALUE);
 
-    public static final SerializableDataType<List<Integer>> POSITIVE_INTS = POSITIVE_INT.listOf();
+    public static final SerializableDataType<List<Integer>> POSITIVE_INTS = POSITIVE_INT.list();
 
     public static final SerializableDataType<Integer> NON_NEGATIVE_INT = SerializableDataType.boundNumber(INT, 0, Integer.MAX_VALUE);
 
-    public static final SerializableDataType<List<Integer>> NON_NEGATIVE_INTS = NON_NEGATIVE_INT.listOf();
+    public static final SerializableDataType<List<Integer>> NON_NEGATIVE_INTS = NON_NEGATIVE_INT.list();
 
     public static final SerializableDataType<Boolean> BOOLEAN = SerializableDataType.of(Codec.BOOL, PacketCodecs.BOOL.cast());
 
     public static final SerializableDataType<Float> FLOAT = SerializableDataType.of(Codec.FLOAT, PacketCodecs.FLOAT.cast());
 
-    public static final SerializableDataType<List<Float>> FLOATS = FLOAT.listOf();
+    public static final SerializableDataType<List<Float>> FLOATS = FLOAT.list();
 
     public static final SerializableDataType<Float> POSITIVE_FLOAT = SerializableDataType.boundNumber(FLOAT, 1F, Float.MAX_VALUE);
 
-    public static final SerializableDataType<List<Float>> POSITIVE_FLOATS = POSITIVE_FLOAT.listOf();
+    public static final SerializableDataType<List<Float>> POSITIVE_FLOATS = POSITIVE_FLOAT.list();
 
     public static final SerializableDataType<Float> NON_NEGATIVE_FLOAT = SerializableDataType.boundNumber(FLOAT, 0F, Float.MAX_VALUE);
 
-    public static final SerializableDataType<List<Float>> NON_NEGATIVE_FLOATS = NON_NEGATIVE_FLOAT.listOf();
+    public static final SerializableDataType<List<Float>> NON_NEGATIVE_FLOATS = NON_NEGATIVE_FLOAT.list();
 
     public static final SerializableDataType<Double> DOUBLE = SerializableDataType.of(Codec.DOUBLE, PacketCodecs.DOUBLE.cast());
 
-    public static final SerializableDataType<List<Double>> DOUBLES = DOUBLE.listOf();
+    public static final SerializableDataType<List<Double>> DOUBLES = DOUBLE.list();
 
     public static final SerializableDataType<Double> POSITIVE_DOUBLE = SerializableDataType.boundNumber(DOUBLE, 1D, Double.MAX_VALUE);
 
-    public static final SerializableDataType<List<Double>> POSITIVE_DOUBLES = POSITIVE_DOUBLE.listOf();
+    public static final SerializableDataType<List<Double>> POSITIVE_DOUBLES = POSITIVE_DOUBLE.list();
 
     public static final SerializableDataType<Double> NON_NEGATIVE_DOUBLE = SerializableDataType.boundNumber(DOUBLE, 0D, Double.MAX_VALUE);
 
-    public static final SerializableDataType<List<Double>> NON_NEGATIVE_DOUBLES = NON_NEGATIVE_DOUBLE.listOf();
+    public static final SerializableDataType<List<Double>> NON_NEGATIVE_DOUBLES = NON_NEGATIVE_DOUBLE.list();
 
     public static final SerializableDataType<String> STRING = SerializableDataType.of(Codec.STRING, PacketCodecs.STRING.cast());
 
-    public static final SerializableDataType<List<String>> STRINGS = STRING.listOf();
+    public static final SerializableDataType<List<String>> STRINGS = STRING.list();
 
     public static final SerializableDataType<Number> NUMBER = SerializableDataType.lazy(() -> SerializableDataType.of(CalioCodecs.NUMBER, CalioPacketCodecs.NUMBER.cast()));
 
-    public static final SerializableDataType<List<Number>> NUMBERS = NUMBER.listOf();
+    public static final SerializableDataType<List<Number>> NUMBERS = NUMBER.list();
 
     public static final CompoundSerializableDataType<Vec3d> VECTOR = SerializableDataType.compound(
         new SerializableData()
@@ -119,7 +118,7 @@ public final class SerializableDataTypes {
             data.getDouble("y"),
             data.getDouble("z")
         ),
-        (vec3d, data) -> data
+        (vec3d, serializableData) -> serializableData.instance()
             .set("x", vec3d.getX())
             .set("y", vec3d.getY())
             .set("z", vec3d.getZ())
@@ -130,7 +129,7 @@ public final class SerializableDataTypes {
         Identifier.PACKET_CODEC.cast()
     );
 
-    public static final SerializableDataType<List<Identifier>> IDENTIFIERS = IDENTIFIER.listOf();
+    public static final SerializableDataType<List<Identifier>> IDENTIFIERS = IDENTIFIER.list();
 
     public static final SerializableDataType<RegistryKey<Enchantment>> ENCHANTMENT = SerializableDataType.registryKey(RegistryKeys.ENCHANTMENT);
 
@@ -142,11 +141,11 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<EntityAttribute> ATTRIBUTE = SerializableDataType.registry(Registries.ATTRIBUTE);
 
-    public static final SerializableDataType<List<EntityAttribute>> ATTRIBUTES = ATTRIBUTE.listOf();
+    public static final SerializableDataType<List<EntityAttribute>> ATTRIBUTES = ATTRIBUTE.list();
 
     public static final SerializableDataType<RegistryEntry<EntityAttribute>> ATTRIBUTE_ENTRY = SerializableDataType.registryEntry(Registries.ATTRIBUTE);
 
-    public static final SerializableDataType<List<RegistryEntry<EntityAttribute>>> ATTRIBUTE_ENTRIES = ATTRIBUTE_ENTRY.listOf();
+    public static final SerializableDataType<List<RegistryEntry<EntityAttribute>>> ATTRIBUTE_ENTRIES = ATTRIBUTE_ENTRY.list();
 
     public static final SerializableDataType<EntityAttributeModifier.Operation> MODIFIER_OPERATION = SerializableDataType.enumValue(EntityAttributeModifier.Operation.class);
 
@@ -160,13 +159,13 @@ public final class SerializableDataTypes {
             data.getDouble("amount"),
             data.get("operation")
         ),
-        (entityAttributeModifier, data) -> data
+        (entityAttributeModifier, serializableData) -> serializableData.instance()
             .set("id", entityAttributeModifier.id())
             .set("amount", entityAttributeModifier.value())
             .set("operation", entityAttributeModifier.operation())
     );
 
-    public static final SerializableDataType<List<EntityAttributeModifier>> ATTRIBUTE_MODIFIERS = ATTRIBUTE_MODIFIER.listOf();
+    public static final SerializableDataType<List<EntityAttributeModifier>> ATTRIBUTE_MODIFIERS = ATTRIBUTE_MODIFIER.list();
 
     public static final SerializableDataType<Item> ITEM = SerializableDataType.registry(Registries.ITEM);
 
@@ -174,11 +173,11 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<StatusEffect> STATUS_EFFECT = SerializableDataType.registry(Registries.STATUS_EFFECT);
 
-    public static final SerializableDataType<List<StatusEffect>> STATUS_EFFECTS = STATUS_EFFECT.listOf();
+    public static final SerializableDataType<List<StatusEffect>> STATUS_EFFECTS = STATUS_EFFECT.list();
 
     public static final SerializableDataType<RegistryEntry<StatusEffect>> STATUS_EFFECT_ENTRY = SerializableDataType.registryEntry(Registries.STATUS_EFFECT);
 
-    public static final SerializableDataType<List<RegistryEntry<StatusEffect>>> STATUS_EFFECT_ENTRIES = STATUS_EFFECT_ENTRY.listOf();
+    public static final SerializableDataType<List<RegistryEntry<StatusEffect>>> STATUS_EFFECT_ENTRIES = STATUS_EFFECT_ENTRY.list();
 
     public static final CompoundSerializableDataType<StatusEffectInstance> STATUS_EFFECT_INSTANCE = SerializableDataType.compound(
         new SerializableData()
@@ -196,7 +195,7 @@ public final class SerializableDataTypes {
             data.getBoolean("show_particles"),
             data.getBoolean("show_icon")
         ),
-        (effectInstance, data) -> data
+        (effectInstance, serializableData) -> serializableData.instance()
             .set("id", effectInstance.getEffectType())
             .set("duration", effectInstance.getDuration())
             .set("amplifier", effectInstance.getAmplifier())
@@ -205,7 +204,7 @@ public final class SerializableDataTypes {
             .set("show_icon", effectInstance.shouldShowIcon())
     );
 
-    public static final SerializableDataType<List<StatusEffectInstance>> STATUS_EFFECT_INSTANCES = STATUS_EFFECT_INSTANCE.listOf();
+    public static final SerializableDataType<List<StatusEffectInstance>> STATUS_EFFECT_INSTANCES = STATUS_EFFECT_INSTANCE.list();
 
     public static final SerializableDataType<TagKey<Item>> ITEM_TAG = SerializableDataType.tagKey(RegistryKeys.ITEM);
 
@@ -217,7 +216,7 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<Ingredient.Entry> INGREDIENT_ENTRY = SerializableDataType.of(Ingredient.Entry.CODEC);
 
-    public static final SerializableDataType<List<Ingredient.Entry>> INGREDIENT_ENTRIES = INGREDIENT_ENTRY.listOf();
+    public static final SerializableDataType<List<Ingredient.Entry>> INGREDIENT_ENTRIES = INGREDIENT_ENTRY.list();
 
     /**
      *  An alternative version of {@link Ingredient} codec as a data type that allows for `minecraft:air`
@@ -282,7 +281,7 @@ public final class SerializableDataTypes {
         new SerializableData()
             .add("type", PARTICLE_TYPE)
             .addSupplied("params", NBT_COMPOUND, NbtCompound::new),
-        (data, ops) -> {
+        (ops, data) -> {
 
             ParticleType<? extends ParticleEffect> particleType = data.get("type");
             NbtCompound paramsNbt = data.get("params");
@@ -298,10 +297,10 @@ public final class SerializableDataTypes {
 
             else {
 
-                RegistryOps<NbtElement> nbtOps = Calio
-                    .convertToRegistryOps(ops, NbtOps.INSTANCE)
-                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effect without access to registries!"));
                 paramsNbt.putString("type", particleTypeId.toString());
+                RegistryOps<NbtElement> nbtOps = Calio.getWrapperLookup(ops)
+                    .map(lookup -> lookup.getOps(NbtOps.INSTANCE))
+                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effect without access to registries!"));
 
                 return ParticleTypes.TYPE_CODEC
                     .parse(nbtOps, paramsNbt)
@@ -310,40 +309,36 @@ public final class SerializableDataTypes {
             }
 
         },
-        (particleEffect, data) -> data
+        (particleEffect, ops, serializableData) -> serializableData.instance()
             .set("type", particleEffect.getType())
             .set("params", ParticleTypes.TYPE_CODEC
-                .encodeStart(NbtOps.INSTANCE, particleEffect)
+                .encodeStart(Calio.wrapRegistryOps(ops, NbtOps.INSTANCE), particleEffect)
                 .getOrThrow())
     );
 
     public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = SerializableDataType.of(
-        new StrictCodec<>() {
+        new Codec<>() {
 
             @Override
-            public <T> Pair<ParticleEffect, T> strictDecode(DynamicOps<T> ops, T input) {
+            public <T> DataResult<Pair<ParticleEffect, T>> decode(DynamicOps<T> ops, T input) {
 
                 if (ops.getStringValue(input).isSuccess()) {
-
-                    if (PARTICLE_TYPE.strictParse(ops, input) instanceof SimpleParticleType simpleParticleType) {
-                        return Pair.of(simpleParticleType, input);
-                    }
-
-                    else {
-                        throw new IllegalArgumentException("Expected a string with parameter-less particle effect.");
-                    }
-
+                    return PARTICLE_TYPE.codec().parse(ops, input)
+                        .flatMap(type -> type instanceof SimpleParticleType simpleType
+                            ? DataResult.success(simpleType)
+                            : DataResult.error(() -> "Particle effect \"" + Registries.PARTICLE_TYPE.getId(type) + "\" requires parameters!"))
+                        .map(type -> Pair.of(type, input));
                 }
 
                 else {
-                    return PARTICLE_EFFECT.strictDecode(ops, input);
+                    return PARTICLE_EFFECT.codec().decode(ops, input);
                 }
 
             }
 
             @Override
-            public <T> T strictEncode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
-                return PARTICLE_EFFECT.strictEncode(input, ops, prefix);
+            public <T> DataResult<T> encode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
+                return PARTICLE_EFFECT.codec().encode(input, ops, prefix);
             }
 
         },
@@ -360,7 +355,7 @@ public final class SerializableDataTypes {
             data.get("id"), 1,
             data.get("components")
         ),
-        (stack, data) -> data
+        (stack, serializableData) -> serializableData.instance()
             .set("id", stack.getRegistryEntry())
             .set("components", stack.getComponentChanges())
     );
@@ -368,33 +363,33 @@ public final class SerializableDataTypes {
     public static final CompoundSerializableDataType<ItemStack> ITEM_STACK = SerializableDataType.compound(
         UNCOUNTED_ITEM_STACK.serializableData().copy()
             .add("count", SerializableDataType.boundNumber(INT, 1, 99), 1),
-        (data, ops) -> {
+        (ops, data) -> {
 
-            ItemStack stack = UNCOUNTED_ITEM_STACK.fromData(data, ops);
+            ItemStack stack = UNCOUNTED_ITEM_STACK.fromData(ops, data);
             stack.setCount(data.getInt("count"));
 
             return stack;
 
         },
-        (stack, data) -> UNCOUNTED_ITEM_STACK.writeTo(stack, data)
+        (stack, ops, serializableData) -> UNCOUNTED_ITEM_STACK.toData(stack, ops, serializableData)
             .set("count", ((ItemStackAccessor) (Object) stack).getCountOverride())
     );
 
-    public static final SerializableDataType<List<ItemStack>> ITEM_STACKS = ITEM_STACK.listOf();
+    public static final SerializableDataType<List<ItemStack>> ITEM_STACKS = ITEM_STACK.list();
 
     public static final SerializableDataType<Text> TEXT = SerializableDataType.of(TextCodecs.CODEC, TextCodecs.UNLIMITED_REGISTRY_PACKET_CODEC);
 
-    public static final SerializableDataType<List<Text>> TEXTS = TEXT.listOf();
+    public static final SerializableDataType<List<Text>> TEXTS = TEXT.list();
 
     public static final SerializableDataType<RecipeEntry<? extends Recipe<?>>> RECIPE = SerializableDataType.lazy(() -> SerializableDataType.of(CalioCodecs.RECIPE_ENTRY, CalioPacketCodecs.RECIPE_ENTRY));
 
     public static final SerializableDataType<GameEvent> GAME_EVENT = SerializableDataType.registry(Registries.GAME_EVENT);
 
-    public static final SerializableDataType<List<GameEvent>> GAME_EVENTS = GAME_EVENT.listOf();
+    public static final SerializableDataType<List<GameEvent>> GAME_EVENTS = GAME_EVENT.list();
 
     public static final SerializableDataType<RegistryEntry<GameEvent>> GAME_EVENT_ENTRY = SerializableDataType.registryEntry(Registries.GAME_EVENT);
 
-    public static final SerializableDataType<List<RegistryEntry<GameEvent>>> GAME_EVENT_ENTRIES = GAME_EVENT_ENTRY.listOf();
+    public static final SerializableDataType<List<RegistryEntry<GameEvent>>> GAME_EVENT_ENTRIES = GAME_EVENT_ENTRY.list();
 
     public static final SerializableDataType<TagKey<GameEvent>> GAME_EVENT_TAG = SerializableDataType.tagKey(RegistryKeys.GAME_EVENT);
 
@@ -421,16 +416,16 @@ public final class SerializableDataTypes {
             data.get("effect"),
             data.getFloat("chance")
         ),
-        (effectChance, data) -> data
+        (effectChance, serializableData) -> serializableData.instance()
             .set("effect", effectChance.statusEffectInstance())
             .set("chance", effectChance.chance())
     );
 
-    public static final SerializableDataType<List<StatusEffectChance>> STATUS_EFFECT_CHANCES = STATUS_EFFECT_CHANCE.listOf();
+    public static final SerializableDataType<List<StatusEffectChance>> STATUS_EFFECT_CHANCES = STATUS_EFFECT_CHANCE.list();
 
     public static final SerializableDataType<FoodComponent.StatusEffectEntry> FOOD_STATUS_EFFECT_ENTRY = SerializableDataType.of(FoodComponent.StatusEffectEntry.CODEC, FoodComponent.StatusEffectEntry.PACKET_CODEC);
 
-    public static final SerializableDataType<List<FoodComponent.StatusEffectEntry>> FOOD_STATUS_EFFECT_ENTRIES = FOOD_STATUS_EFFECT_ENTRY.listOf();
+    public static final SerializableDataType<List<FoodComponent.StatusEffectEntry>> FOOD_STATUS_EFFECT_ENTRIES = FOOD_STATUS_EFFECT_ENTRY.list();
 
     public static final CompoundSerializableDataType<FoodComponent> FOOD_COMPONENT = SerializableDataType.compound(
         new SerializableData()
@@ -458,7 +453,7 @@ public final class SerializableDataTypes {
             );
 
         },
-        (foodComponent, data) -> data
+        (foodComponent, serializableData) -> serializableData.instance()
             .set("nutrition", foodComponent.nutrition())
             .set("saturation", foodComponent.saturation())
             .set("can_always_eat", foodComponent.canAlwaysEat())
@@ -522,13 +517,17 @@ public final class SerializableDataTypes {
             }
 
         },
-        (stat, data) -> {
+        (stat, serializableData) -> {
+
+            SerializableData.Instance data = serializableData.instance();
 
             StatType statType = stat.getType();
             Optional<Identifier> optId = Optional.ofNullable(statType.getRegistry().getId(stat.getValue()));
 
             data.set("type", statType);
             optId.ifPresent(id -> data.set("id", id));
+
+            return data;
 
         }
     );
@@ -537,7 +536,7 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.of(CalioCodecs.TAG_ENTRY, CalioPacketCodecs.TAG_ENTRY.cast());
 
-    public static final SerializableDataType<List<TagEntry>> TAG_ENTRIES = TAG_ENTRY.listOf();
+    public static final SerializableDataType<List<TagEntry>> TAG_ENTRIES = TAG_ENTRY.list();
 
     public static final SerializableDataType<TagLike<Item>> ITEM_TAG_LIKE = SerializableDataType.tagLike(Registries.ITEM);
 

@@ -1,145 +1,75 @@
 package io.github.apace100.calio.data;
 
 import com.mojang.serialization.*;
-import io.github.apace100.calio.serialization.StrictMapCodec;
+import io.github.apace100.calio.codec.CompoundMapCodec;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
-import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.stream.Stream;
+import java.util.function.Supplier;
 
 public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
-    private final MapCodec<T> mapCodec;
+    private final SerializableData serializableData;
 
-    private final BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData;
-    private final BiConsumer<T, SerializableData.Instance> toData;
+    private final Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter;
+    private final BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter;
 
-    public CompoundSerializableDataType(MapCodec<T> mapCodec, BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData, BiConsumer<T, SerializableData.Instance> toData, PacketCodec<RegistryByteBuf, T> packetCodec) {
-        super(mapCodec.codec(), packetCodec);
-        this.mapCodec = mapCodec;
-        this.fromData = fromData;
-        this.toData = toData;
+    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter) {
+        super(null, null);
+        this.serializableData = serializableData;
+        this.compoundCodecGetter = compoundCodecGetter;
+        this.packetCodecGetter = packetCodecGetter;
+    }
+
+    @Override
+    public Codec<T> codec() {
+        return mapCodec().codec();
+    }
+
+    @Override
+    public PacketCodec<RegistryByteBuf, T> packetCodec() {
+        return packetCodecGetter.apply(serializableData(), mapCodec());
+    }
+
+    public CompoundSerializableDataType<T> setRoot(boolean root) {
+        return new CompoundSerializableDataType<>(serializableData().setRoot(root), this.compoundCodecGetter, this.packetCodecGetter);
+    }
+
+    @Override
+    public SerializableData.Field<T> field(String name) {
+        return new SerializableData.FieldImpl<>(name, setRoot(false));
+    }
+
+    @Override
+    public SerializableData.Field<T> field(String name, Supplier<T> defaultSupplier) {
+        return new SerializableData.OptionalFieldImpl<>(name, setRoot(false), defaultSupplier);
+    }
+
+    @Override
+    public SerializableData.Field<T> functionedField(String name, Function<SerializableData.Instance, T> defaultFunction) {
+        return new SerializableData.FunctionedFieldImpl<>(name, setRoot(false), defaultFunction);
     }
 
     public SerializableData serializableData() {
-        return this.mapCodec().serializableData();
+        return serializableData;
     }
 
-    public MapCodec<T> mapCodec() {
-        return mapCodec;
+    public CompoundMapCodec<T> mapCodec() {
+        return compoundCodecGetter.apply(serializableData());
     }
 
-    public SerializableData.Instance toData(T value) {
-        return this.writeTo(value, this.serializableData().instance());
+    public T fromData(DynamicOps<?> ops, SerializableData.Instance data) {
+        return mapCodec().fromData(ops, data);
     }
 
-    public SerializableData.Instance writeTo(T value, SerializableData.Instance data) {
-        toData.accept(value, data);
-        return data;
+    public SerializableData.Instance toData(T value, DynamicOps<?> ops) {
+        return toData(value, ops, serializableData());
     }
 
-    public T fromData(SerializableData.Instance data, DynamicOps<?> ops) {
-        return fromData.apply(data, ops);
-    }
-
-    public static <T> CompoundSerializableDataType<T> of(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiConsumer<T, SerializableData.Instance> toData, PacketCodec<RegistryByteBuf, T> packetCodec) {
-        BiFunction<SerializableData.Instance, DynamicOps<?>, T> newfromData = (data, ops) -> fromData.apply(data);
-        return new CompoundSerializableDataType<>(new MapCodec<>(serializableData, newfromData, toData), newfromData, toData, packetCodec);
-    }
-
-    public static <T> CompoundSerializableDataType<T> of(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiConsumer<T, SerializableData.Instance> toData) {
-        BiFunction<SerializableData.Instance, DynamicOps<?>, T> newfromData = (data, ops) -> fromData.apply(data);
-        return new CompoundSerializableDataType<>(
-            new MapCodec<>(serializableData, newfromData, toData),
-            newfromData, toData,
-            new PacketCodec<>() {
-
-                @Override
-                public T decode(RegistryByteBuf buf) {
-                    return fromData.apply(serializableData.receive(buf));
-                }
-
-                @Override
-                public void encode(RegistryByteBuf buf, T value) {
-
-                    SerializableData.Instance data = serializableData.instance();
-                    toData.accept(value, data);
-
-                    serializableData.send(buf, data);
-
-                }
-
-            }
-        );
-
-    }
-
-    public static <T> CompoundSerializableDataType<T> of(SerializableData serializableData, BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData, BiConsumer<T, SerializableData.Instance> toData) {
-        return new CompoundSerializableDataType<>(
-            new MapCodec<>(serializableData, fromData, toData),
-            fromData, toData,
-            new PacketCodec<>() {
-
-                @Override
-                public T decode(RegistryByteBuf buf) {
-                    return fromData.apply(serializableData.receive(buf), buf.getRegistryManager().getOps(JavaOps.INSTANCE));
-                }
-
-                @Override
-                public void encode(RegistryByteBuf buf, T value) {
-
-                    SerializableData.Instance data = serializableData.instance();
-                    toData.accept(value, data);
-
-                    serializableData.send(buf, data);
-
-                }
-
-            }
-        );
-
-    }
-
-    public static class MapCodec<T> extends StrictMapCodec<T> {
-
-        private final SerializableData serializableData;
-
-        private final BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData;
-        private final BiConsumer<T, SerializableData.Instance> toData;
-
-        public MapCodec(SerializableData serializableData, BiFunction<SerializableData.Instance, DynamicOps<?>, T> fromData, BiConsumer<T, SerializableData.Instance> toData) {
-            this.serializableData = serializableData;
-            this.fromData = fromData;
-            this.toData = toData;
-        }
-
-        @Override
-        public <I> Stream<I> keys(DynamicOps<I> ops) {
-            return serializableData.keys(ops);
-        }
-
-        @Override
-        public <I> T strictDecode(DynamicOps<I> ops, MapLike<I> input) {
-            return fromData.apply(serializableData.strictDecode(ops, input), ops);
-        }
-
-        @Override
-        public <I> RecordBuilder<I> encode(T input, DynamicOps<I> ops, RecordBuilder<I> prefix) {
-
-            SerializableData.Instance data = serializableData.instance();
-            toData.accept(input, data);
-
-            return serializableData.encode(data, ops, prefix);
-
-        }
-
-        public SerializableData serializableData() {
-            return serializableData;
-        }
-
+    public SerializableData.Instance toData(T value, DynamicOps<?> ops, SerializableData serializableData) {
+        return mapCodec().toData(value, ops, serializableData);
     }
 
 }

@@ -14,7 +14,6 @@ import net.minecraft.recipe.RecipeEntry;
 import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.dynamic.Codecs;
-import net.minecraft.util.math.Vec3d;
 
 import java.util.Collection;
 import java.util.HashSet;
@@ -71,13 +70,6 @@ public class CalioPacketCodecs {
         }
     );
 
-    public static final PacketCodec<ByteBuf, Vec3d> VEC_3D = PacketCodec.tuple(
-        PacketCodecs.DOUBLE, Vec3d::getX,
-        PacketCodecs.DOUBLE, Vec3d::getY,
-        PacketCodecs.DOUBLE, Vec3d::getZ,
-        Vec3d::new
-    );
-
     public static final PacketCodec<RegistryByteBuf, RecipeEntry<?>> RECIPE_ENTRY = PacketCodec.tuple(
         Identifier.PACKET_CODEC, RecipeEntry::id,
         Recipe.PACKET_CODEC, RecipeEntry::value,
@@ -120,18 +112,17 @@ public class CalioPacketCodecs {
 
                 for (E element : elements) {
 
-                    String path = "[" + index + "]";
                     try {
                         elementCodec.encode(buf, element);
                         index++;
                     }
 
                     catch (DataException de) {
-                        throw de.prepend(path);
+                        throw de.prependArray(index);
                     }
 
                     catch (Exception e) {
-                        throw new DataException(DataException.Phase.SENDING, path, e);
+                        throw new DataException(DataException.Phase.SENDING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
                     }
 
                 }
@@ -144,17 +135,16 @@ public class CalioPacketCodecs {
 
                 for (int index = 0; index < size; index++) {
 
-                    String path = "[" + index + "]";
                     try {
                         elements.add(elementCodec.decode(buf));
                     }
 
                     catch (DataException de) {
-                        throw de.prepend(path);
+                        throw de.prependArray(index);
                     }
 
                     catch (Exception e) {
-                        throw new DataException(DataException.Phase.RECEIVING, path, e);
+                        throw new DataException(DataException.Phase.RECEIVING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
                     }
 
                 }

@@ -7,23 +7,21 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.serialization.*;
 import io.github.apace100.calio.Calio;
-import io.github.apace100.calio.serialization.StrictMapCodec;
 import io.github.apace100.calio.util.Validatable;
+import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.util.Identifier;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 @SuppressWarnings("unused")
-public class SerializableData extends StrictMapCodec<SerializableData.Instance> {
+public class SerializableData extends MapCodec<SerializableData.Instance> {
 
     // Should be set to the current namespace of the file that is being read. Allows using * in identifiers.
     public static String CURRENT_NAMESPACE;
@@ -31,8 +29,27 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
     // Should be set to the current path of the file that is being read. Allows using * in identifiers.
     public static String CURRENT_PATH;
 
-    protected final Map<String, Field<?>> fields = new LinkedHashMap<>();
-    protected Consumer<SerializableData.Instance> postProcessor = data -> {};
+    protected final Map<String, Field<?>> fields;
+    protected final Function<Instance, DataResult<Instance>> validator;
+
+    protected final boolean root;
+
+    public SerializableData(Map<String, Field<?>> fields, Function<Instance, DataResult<Instance>> validator, boolean root) {
+        this.fields = new Object2ObjectLinkedOpenHashMap<>(fields);
+        this.validator = validator;
+        this.root = root;
+    }
+
+    public SerializableData() {
+        this.fields = new Object2ObjectLinkedOpenHashMap<>();
+        this.validator = DataResult::success;
+        this.root = true;
+    }
+
+    @Override
+    public SerializableData validate(Function<Instance, DataResult<Instance>> validator) {
+        return new SerializableData(this.fields, validator, this.root);
+    }
 
     @Override
     public <T> Stream<T> keys(DynamicOps<T> ops) {
@@ -42,70 +59,110 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
     }
 
     @Override
-    public <T> Instance strictDecode(DynamicOps<T> ops, MapLike<T> input) {
+    public <T> DataResult<Instance> decode(DynamicOps<T> ops, MapLike<T> mapInput) {
 
-        Instance data = new Instance();
-        for (Map.Entry<String, Field<?>> fieldEntry : fields.entrySet()) {
+        try {
 
-            String fieldName = fieldEntry.getKey();
-            Field<?> field = fieldEntry.getValue();
+            Instance data = instance();
+            Map<String, Field<?>> defaultedFields = new Object2ObjectLinkedOpenHashMap<>();
 
-            try {
+            for (Map.Entry<String, Field<?>> fieldEntry : getFields().entrySet()) {
 
-                T element = input.get(fieldName);
-                if (element != null) {
-                    data.set(fieldName, field.dataType().strictParse(ops, element));
+                String fieldName = fieldEntry.getKey();
+                Field<?> field = fieldEntry.getValue();
+
+                try {
+
+                    if (mapInput.get(fieldName) != null) {
+                        data.set(fieldName, field.decode(ops, mapInput.get(fieldName)));
+                    }
+
+                    else if (field.hasDefault()) {
+                        defaultedFields.put(fieldName, field);
+                    }
+
+                    else {
+                        throw new NoSuchFieldException("Required field \"" + fieldName + "\" is missing!");
+                    }
+
                 }
 
-                else if (field.hasDefault()) {
-                    data.set(fieldName, field.getDefault(data));
+                catch (DataException de) {
+                    throw de.prepend(field.path());
                 }
 
-                else {
-                    throw new NoSuchFieldException("Field is required, but is missing!");
+                catch (NoSuchFieldException nsfe) {
+                    throw new DataException(DataException.Phase.READING, "", nsfe);
+                }
+
+                catch (Exception e) {
+                    throw new DataException(DataException.Phase.READING, field.path(), e);
                 }
 
             }
 
-            catch (DataException de) {
-                throw de.prepend(fieldName);
-            }
-
-            catch (Exception e) {
-                throw new DataException(DataException.Phase.READING, fieldName, e);
-            }
+            defaultedFields.forEach((fieldName, field) -> data.set(fieldName, field.getDefault(data)));
+            return DataResult.success(data).flatMap(validator);
 
         }
 
-        postProcessor.accept(data);
-        return data;
+        catch (Exception e) {
+
+            if (root) {
+                return DataResult.error(e::getMessage);
+            }
+
+            else {
+                throw e;
+            }
+
+        }
 
     }
 
     @Override
     public <T> RecordBuilder<T> encode(Instance input, DynamicOps<T> ops, RecordBuilder<T> prefix) {
 
-        this.getFields().forEach((name, field) -> {
+        try {
 
-            try {
+            for (Map.Entry<String, Field<?>> fieldEntry : getFields().entrySet()) {
 
-                if (input.isPresent(name)) {
-                    prefix.add(name, field.dataType().strictEncodeStart(ops, input.get(name)));
+                String fieldName = fieldEntry.getKey();
+                Field<?> field = fieldEntry.getValue();
+
+                try {
+
+                    if (input.isPresent(fieldName)) {
+                        prefix.add(fieldName, field.encode(ops, input.get(fieldName)));
+                    }
+
+                }
+
+                catch (DataException de) {
+                    throw de.prepend(field.path());
+                }
+
+                catch (Exception e) {
+                    throw new DataException(DataException.Phase.WRITING, field.path(), e);
                 }
 
             }
 
-            catch (DataException de) {
-                throw de.prepend(name);
+            return prefix;
+
+        }
+
+        catch (Exception e) {
+
+            if (root) {
+                return prefix.withErrorsFrom(DataResult.error(e::getMessage));
             }
 
-            catch (Exception e) {
-                Calio.LOGGER.error(new DataException(DataException.Phase.WRITING, name, e).getMessage());
+            else {
+                throw e;
             }
 
-        });
-
-        return prefix;
+        }
 
     }
 
@@ -211,55 +268,67 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
     /**
      *  Use {@link #fromJson(JsonObject)} instead.
      */
-    @Deprecated
+    @Deprecated(forRemoval = true)
     public Instance read(JsonObject jsonObject) {
         return this.fromJson(jsonObject);
     }
 
     public Instance fromJson(JsonObject jsonObject) {
         DynamicOps<JsonElement> ops = Calio.wrapRegistryOps(JsonOps.INSTANCE);
-        return this.strictDecode(ops, ops.getMap(jsonObject).getOrThrow());
+        return ops.getMap(jsonObject)
+            .flatMap(mapLike -> decode(ops, mapLike))
+            .getOrThrow();
     }
 
     /**
      *  Use {@link #toJson(Instance)} instead.
      */
-    @Deprecated
+    @Deprecated(forRemoval = true)
     public JsonObject write(Instance data) {
         return this.toJson(data);
     }
 
     public JsonObject toJson(Instance data) {
-        JsonOps ops = JsonOps.INSTANCE;
-        return this.encode(data, ops, ops.mapBuilder()).build(ops.empty())
-            .map(JsonElement::getAsJsonObject)
-            .mapError(err -> "Something went wrong while encoding " + data + " to JSON (skipping): " + err)
-            .resultOrPartial(Calio.LOGGER::warn)
-            .orElseGet(JsonObject::new);
+        return encoder().encodeStart(JsonOps.INSTANCE, data)
+            .flatMap(jsonElement -> jsonElement instanceof JsonObject jsonObject
+                ? DataResult.success(jsonObject)
+                : DataResult.error(() -> "Not a JSON object: " + jsonElement))
+            .getOrThrow();
     }
 
     public <T> SerializableData add(String name, @NotNull Codec<T> codec) {
-        return this.addField(name, new Field<>(SerializableDataType.of(codec)));
+        return add(name, SerializableDataType.of(codec));
     }
 
     public <T> SerializableData add(String name, @NotNull Codec<T> codec, T defaultValue) {
-        return this.addField(name, new Field<>(SerializableDataType.of(codec), Suppliers.memoize(() -> defaultValue)));
+        return add(name, SerializableDataType.of(codec), defaultValue);
     }
 
     public <T> SerializableData addSupplied(String name, @NotNull Codec<T> codec, @NotNull Supplier<T> defaultSupplier) {
-        return this.addField(name, new Field<>(SerializableDataType.of(codec), defaultSupplier));
+        return addSupplied(name, SerializableDataType.of(codec), defaultSupplier);
     }
 
     public <T> SerializableData addFunctionedDefault(String name, @NotNull Codec<T> codec, @NotNull Function<Instance, T> defaultFunction) {
-        return this.addField(name, new Field<>(SerializableDataType.of(codec), defaultFunction));
+        return addFunctionedDefault(name, SerializableDataType.of(codec), defaultFunction);
     }
 
-    public SerializableData postProcessor(@NotNull Consumer<SerializableData.Instance> postProcessor) {
-        this.postProcessor = postProcessor;
-        return this;
+    public <T> SerializableData add(String name, @NotNull SerializableDataType<T> dataType) {
+        return addField(name, dataType.field(name));
     }
 
-    protected <T> SerializableData addField(String name, Field<T> field) {
+    public <T> SerializableData add(String name, @NotNull SerializableDataType<T> dataType, T defaultValue) {
+        return addField(name, dataType.field(name, Suppliers.memoize(() -> defaultValue)));
+    }
+
+    public <T> SerializableData addSupplied(String name, @NotNull SerializableDataType<T> dataType, @NotNull Supplier<T> defaultSupplier) {
+        return addField(name, dataType.field(name, defaultSupplier));
+    }
+
+    public <T> SerializableData addFunctionedDefault(String name, @NotNull SerializableDataType<T> dataType, @NotNull Function<Instance, T> defaultFunction) {
+        return addField(name, dataType.functionedField(name, defaultFunction));
+    }
+
+	protected <T> SerializableData addField(String name, Field<T> field) {
 
         if (name == null || name.isEmpty()) {
             throw new IllegalArgumentException("Field name cannot be empty!");
@@ -272,19 +341,16 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
 
     }
 
-    public Instance instance() {
-        return new Instance();
+    public boolean isRoot() {
+        return root;
+    }
+
+	public SerializableData setRoot(boolean root) {
+        return new SerializableData(this.fields, this.validator, root);
     }
 
     public SerializableData copy() {
-
-        SerializableData copy = new SerializableData();
-
-        copy.fields.putAll(this.fields);
-        copy.postProcessor = this.postProcessor;
-
-        return copy;
-
+        return new SerializableData(this.fields, this.validator, this.root);
     }
 
     public ImmutableMap<String, Field<?>> getFields() {
@@ -311,6 +377,10 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
         return fields.containsKey(fieldName);
     }
 
+    public Instance instance() {
+        return new Instance();
+    }
+
     public class Instance implements Validatable {
 
         private final Map<String, Object> map = new HashMap<>();
@@ -322,22 +392,56 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
         @Override
         public void validate() throws Exception {
 
-            map.forEach((field, value) -> {
+            getFields().forEach((name, field) -> {
 
-                if (fields.containsKey(field) && value instanceof Validatable validatable) {
+                if (!map.containsKey(name)) {
+                    return;
+                }
 
-                    try {
-                        validatable.validate();
+                try {
+
+                    switch (map.get(name)) {
+                        case List<?> list -> {
+
+                            int index = 0;
+                            for (Object element : list) {
+
+                                try {
+
+                                    if (element instanceof Validatable validatable) {
+                                        validatable.validate();
+                                    }
+
+                                    index++;
+
+                                }
+
+                                catch (DataException de) {
+                                    throw de.prependArray(index);
+                                }
+
+                                catch (Exception e) {
+                                    throw new DataException(DataException.Phase.READING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
+                                }
+
+                            }
+
+                        }
+                        case Validatable validatable ->
+                            validatable.validate();
+                        case null, default -> {
+
+                        }
                     }
 
-                    catch (DataException de) {
-                        throw de.prepend(field);
-                    }
+                }
 
-                    catch (Exception e) {
-                        throw new DataException(DataException.Phase.READING, field, e);
-                    }
+                catch (DataException de) {
+                    throw de.prepend(field.path());
+                }
 
+                catch (Exception e) {
+                    throw new DataException(DataException.Phase.READING, field.path(), e);
                 }
 
             });
@@ -457,63 +561,90 @@ public class SerializableData extends StrictMapCodec<SerializableData.Instance> 
 
     }
 
-    public static class Field<T> {
+    public interface Field<E> {
 
-        protected final SerializableDataType<T> dataType;
-        protected final Function<Instance, T> defaultFunction;
+        String path();
 
-        protected final Supplier<T> defaultValue;
+        SerializableDataType<E> dataType();
 
-        protected final boolean hasDefaultValue;
-        protected final boolean hasDefaultFunction;
+        <I> E decode(DynamicOps<I> ops, I input);
 
-        public Field(SerializableDataType<T> dataType) {
-            this.dataType = dataType;
-            this.defaultValue = () -> null;
-            this.defaultFunction = null;
-            this.hasDefaultValue = false;
-            this.hasDefaultFunction = false;
+        <I> I encode(DynamicOps<I> ops, E input);
+
+        E getDefault(SerializableData.Instance data);
+
+        boolean hasDefault();
+
+    }
+
+    public record FieldImpl<E>(String path, SerializableDataType<E> dataType) implements Field<E> {
+
+        @Override
+        public <I> E decode(DynamicOps<I> ops, I input) {
+            return dataType().read(ops, input);
         }
 
-        public Field(SerializableDataType<T> dataType, Supplier<T> defaultValue) {
-            this.dataType = dataType;
-            this.defaultValue = defaultValue;
-            this.defaultFunction = null;
-            this.hasDefaultValue = true;
-            this.hasDefaultFunction = false;
+        @Override
+        public <I> I encode(DynamicOps<I> ops, E input) {
+            return dataType().write(ops, input);
         }
 
-        public Field(SerializableDataType<T> dataType, @NotNull Function<Instance, T> defaultFunction) {
-            this.dataType = dataType;
-            this.defaultValue = () -> null;
-            this.defaultFunction = defaultFunction;
-            this.hasDefaultValue = false;
-            this.hasDefaultFunction = true;
+        @Override
+        public E getDefault(Instance data) {
+            throw new IllegalStateException("Tried getting default value of field \"" + path + "\", which doesn't and cannot have any!");
         }
 
-        public SerializableDataType<T> dataType() {
-            return dataType;
-        }
-
+        @Override
         public boolean hasDefault() {
-            return hasDefaultFunction
-                || hasDefaultValue;
+            return false;
         }
 
-        public T getDefault(Instance data) {
+    }
 
-            if (hasDefaultFunction && defaultFunction != null) {
-                return defaultFunction.apply(data);
-            }
+    public record FunctionedFieldImpl<E>(String path, SerializableDataType<E> dataType, Function<Instance, E> defaultFunction) implements Field<E> {
 
-            else if (hasDefaultValue) {
-                return defaultValue.get();
-            }
+        @Override
+        public <I> E decode(DynamicOps<I> ops, I input) {
+            return dataType().read(ops, input);
+        }
 
-            else {
-                throw new IllegalStateException("Tried to access default value of field when no default was provided.");
-            }
+        @Override
+        public <I> I encode(DynamicOps<I> ops, E input) {
+            return dataType().write(ops, input);
+        }
 
+        @Override
+        public E getDefault(Instance data) {
+            return defaultFunction().apply(data);
+        }
+
+        @Override
+        public boolean hasDefault() {
+            return true;
+        }
+
+    }
+
+    public record OptionalFieldImpl<E>(String path, SerializableDataType<E> dataType, Supplier<E> defaultSupplier) implements Field<E> {
+
+        @Override
+        public <I> E decode(DynamicOps<I> ops, I input) {
+            return dataType().read(ops, input);
+        }
+
+        @Override
+        public <I> I encode(DynamicOps<I> ops, E input) {
+            return dataType().write(ops, input);
+        }
+
+        @Override
+        public E getDefault(Instance data) {
+            return defaultSupplier().get();
+        }
+
+        @Override
+        public boolean hasDefault() {
+            return true;
         }
 
     }

@@ -42,7 +42,7 @@ public class CalioCodecs {
     };
 
     public static final Codec<RecipeEntry<?>> RECIPE_ENTRY = Codec.lazyInitialized(() -> RecordCodecBuilder.create(instance -> instance.group(
-        SerializableDataTypes.IDENTIFIER.fieldOf("id").forGetter(RecipeEntry::id),
+        SerializableDataTypes.IDENTIFIER.codec().fieldOf("id").forGetter(RecipeEntry::id),
         CalioMapCodecs.RECIPE.forGetter(RecipeEntry::value)
     ).apply(instance, RecipeEntry::new)));
 
@@ -57,7 +57,7 @@ public class CalioCodecs {
     ).apply(instance, Ingredient.StackEntry::new));
 
     public static final Codec<Ingredient.TagEntry> INGREDIENT_TAG_ENTRY = Codec.lazyInitialized(() -> RecordCodecBuilder.create(instance -> instance.group(
-        SerializableDataTypes.ITEM_TAG.fieldOf("tag").forGetter(Ingredient.TagEntry::tag)
+        SerializableDataTypes.ITEM_TAG.codec().fieldOf("tag").forGetter(Ingredient.TagEntry::tag)
     ).apply(instance, Ingredient.TagEntry::new)));
 
     public static final Codec<Ingredient.Entry> INGREDIENT_ENTRY = Codec.xor(INGREDIENT_STACK_ENTRY, INGREDIENT_TAG_ENTRY).xmap(
@@ -87,7 +87,7 @@ public class CalioCodecs {
         Codec.BOOL.optionalFieldOf("required", true).forGetter(tagEntry -> ((TagEntryAccessor) tagEntry).isRequired())
     ).apply(instance, TagEntry::new));
 
-    public static final StrictCodec<TagEntry> TAG_ENTRY = StrictCodec.of(Codec.either(TAG_ENTRY_ID, STRICT_TAG_ENTRY).xmap(
+    public static final Codec<TagEntry> TAG_ENTRY = Codec.either(TAG_ENTRY_ID, STRICT_TAG_ENTRY).xmap(
         either -> either.map(
             entryId -> new TagEntry(entryId, true),
             Function.identity()
@@ -95,7 +95,7 @@ public class CalioCodecs {
         tagEntry -> ((TagEntryAccessor) tagEntry).isRequired()
             ? Either.left(((TagEntryAccessor) tagEntry).callGetIdForCodec())
             : Either.right(tagEntry)
-    ));
+    );
 
     public static Codec<Ingredient> ingredient(boolean allowEmpty) {
 
