@@ -19,6 +19,7 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.IntFunction;
+import java.util.function.Supplier;
 
 public class CalioPacketCodecs {
 
@@ -97,13 +98,13 @@ public class CalioPacketCodecs {
         TagEntry::new
     );
 
-    public static final PacketCodec<ByteBuf, Set<TagEntry>> TAG_ENTRY_SET = collection(HashSet::new, CalioPacketCodecs.TAG_ENTRY);
+    public static final PacketCodec<ByteBuf, Set<TagEntry>> TAG_ENTRY_SET = collection(HashSet::new, () -> CalioPacketCodecs.TAG_ENTRY);
 
-    public static <B extends ByteBuf, E, C extends Collection<E>> PacketCodec<B, C> collection(IntFunction<C> collectionFactory, PacketCodec<? super B, E> elementCodec) {
+    public static <B extends ByteBuf, E, C extends Collection<E>> PacketCodec<B, C> collection(IntFunction<C> collectionFactory, Supplier<PacketCodec<? super B, E>> elementCodec) {
         return collection(collectionFactory, elementCodec, Integer.MAX_VALUE);
     }
 
-    public static <B extends ByteBuf, E, C extends Collection<E>> PacketCodec<B, C> collection(IntFunction<C> collectionFactory, PacketCodec<? super B, E> elementCodec, int maxSize) {
+    public static <B extends ByteBuf, E, C extends Collection<E>> PacketCodec<B, C> collection(IntFunction<C> collectionFactory, Supplier<PacketCodec<? super B, E>> elementCodec, int maxSize) {
         return PacketCodec.ofStatic(
             (buf, elements) -> {
 
@@ -113,7 +114,7 @@ public class CalioPacketCodecs {
                 for (E element : elements) {
 
                     try {
-                        elementCodec.encode(buf, element);
+                        elementCodec.get().encode(buf, element);
                         index++;
                     }
 
@@ -122,7 +123,7 @@ public class CalioPacketCodecs {
                     }
 
                     catch (Exception e) {
-                        throw new DataException(DataException.Phase.SENDING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
+                        throw new DataException(DataException.Phase.SENDING, index, e);
                     }
 
                 }
@@ -136,7 +137,7 @@ public class CalioPacketCodecs {
                 for (int index = 0; index < size; index++) {
 
                     try {
-                        elements.add(elementCodec.decode(buf));
+                        elements.add(elementCodec.get().decode(buf));
                     }
 
                     catch (DataException de) {
@@ -144,7 +145,7 @@ public class CalioPacketCodecs {
                     }
 
                     catch (Exception e) {
-                        throw new DataException(DataException.Phase.RECEIVING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
+                        throw new DataException(DataException.Phase.RECEIVING, index, e);
                     }
 
                 }

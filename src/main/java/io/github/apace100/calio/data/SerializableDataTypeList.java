@@ -11,203 +11,218 @@ import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
 import java.util.List;
-import java.util.function.Function;
-import java.util.function.Supplier;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 public class SerializableDataTypeList<E> extends SerializableDataType<List<E>> {
 
-	private final SerializableDataType<E> dataType;
+	public SerializableDataTypeList(CustomCodec<E> listCodec, PacketCodec<RegistryByteBuf, List<E>> packetCodec, Optional<String> name, boolean root) {
+		super(listCodec, packetCodec, name, root);
+	}
 
-	private final int min;
-	private final int max;
+	public SerializableDataTypeList(CustomCodec<E> listCodec, PacketCodec<RegistryByteBuf, List<E>> packetCodec) {
+		this(listCodec, packetCodec, Optional.empty(), true);
+	}
 
-	protected SerializableDataTypeList(Codec<List<E>> codec, PacketCodec<RegistryByteBuf, List<E>> packetCodec, SerializableDataType<E> dataType, int min, int max) {
-		super(codec, packetCodec);
-		this.dataType = dataType;
-		this.min = min;
-		this.max = max;
+	@Override
+	public CustomCodec<E> codec() {
+		return (CustomCodec<E>) super.codec();
 	}
 
 	@Override
 	public SerializableDataTypeList<E> setRoot(boolean root) {
-		return of(dataType.setRoot(root), root, min, max);
+
+		SerializableDataType<E> dataType = this.codec().dataType().setRoot(root);
+
+		int minSize = this.codec().minSize();
+		int maxSize = this.codec().maxSize();
+
+		return new SerializableDataTypeList<>(new CustomCodec<>(dataType, minSize, maxSize), CalioPacketCodecs.collection(ObjectArrayList::new, dataType::packetCodec, maxSize));
+
 	}
 
-	@Override
-	public SerializableData.Field<List<E>> field(String name) {
-		return new SerializableData.FieldImpl<>(name, setRoot(false));
-	}
+	public static class CustomCodec<E> implements Codec<List<E>> {
 
-	@Override
-	public SerializableData.Field<List<E>> field(String name, Supplier<List<E>> defaultSupplier) {
-		return new SerializableData.OptionalFieldImpl<>(name, setRoot(false), defaultSupplier);
-	}
+		private final SerializableDataType<E> dataType;
 
-	@Override
-	public SerializableData.Field<List<E>> functionedField(String name, Function<SerializableData.Instance, List<E>> defaultFunction) {
-		return new SerializableData.FunctionedFieldImpl<>(name, setRoot(false), defaultFunction);
-	}
+		private final int minSize;
+		private final int maxSize;
 
-	public static <E> SerializableDataTypeList<E> of(SerializableDataType<E> dataType, int min, int max) {
-		return of(dataType, true, min, max);
-	}
+		CustomCodec(SerializableDataType<E> dataType, int minSize, int maxSize) {
+			this.dataType = dataType;
+			this.minSize = minSize;
+			this.maxSize = maxSize;
+		}
 
-	private static <E> SerializableDataTypeList<E> of(SerializableDataType<E> dataType, boolean root, int min, int max) {
-		return new SerializableDataTypeList<>(
-			new Codec<>() {
+		@Override
+		public <T> DataResult<Pair<List<E>, T>> decode(DynamicOps<T> ops, T input) {
 
-				@Override
-				public <I> DataResult<Pair<List<E>, I>> decode(DynamicOps<I> ops, I input) {
-					return ops.getList(input)
-						.mapOrElse(
-							listInput -> {
+			DataResult<Consumer<Consumer<T>>> listInputResult = ops.getList(input);
+			if (listInputResult.isSuccess()) {
 
-								Stream.Builder<I> inputsBuilder = Stream.builder();
-								List<E> elements = new ObjectArrayList<>();
+				try {
 
-								try {
+					Stream.Builder<T> inputsBuilder = Stream.builder();
+					List<E> elements = new ObjectArrayList<>();
 
-									try {
+					return listInputResult.flatMap(list -> {
 
-										listInput.accept(i -> {
-
-											if (elements.size() > max) {
-												throw createTooLongError(elements.size(), max);
-											}
-
-											E element = dataType.codec()
-												.parse(ops, i)
-												.getOrThrow();
-
-											elements.add(element);
-											inputsBuilder.add(i);
-
-										});
-
-										if (elements.size() < min) {
-											throw createTooShortError(elements.size(), min);
-										}
-
-										I inputs = ops.createList(inputsBuilder.build());
-										List<E> immutableElements = List.copyOf(elements);
-
-										return DataResult.success(Pair.of(immutableElements, inputs));
-
-									}
-
-									catch (DataException de) {
-										throw de.prependArray(elements.size());
-									}
-
-									catch (Exception e) {
-										throw new DataException(DataException.Phase.READING, DataException.Type.ARRAY, "[" + elements.size() + "]", e.getMessage());
-									}
-
-								}
-
-								catch (Exception e) {
-
-									if (root) {
-										return DataResult.error(e::getMessage);
-									}
-
-									else {
-										throw e;
-									}
-
-								}
-
-							},
-							error -> dataType.codec().decode(ops, input)
-								.map(elementAndInput -> elementAndInput
-									.mapFirst(List::of)));
-				}
-
-				@Override
-				public <I> DataResult<I> encode(List<E> input, DynamicOps<I> ops, I prefix) {
-
-					ListBuilder<I> listBuilder = ops.listBuilder();
-					if (input.size() < min) {
-						throw createTooShortError(input.size(), min);
-					}
-
-					else if (input.size() > max) {
-						throw createTooLongError(input.size(), max);
-					}
-
-					else {
-
+						AtomicInteger currentIndex = new AtomicInteger(0);
 						try {
 
-							int index = 0;
-							for (E element : input) {
+							list.accept(elementInput -> {
 
-								try {
+								if (elements.size() <= maxSize) {
 
-									listBuilder.add(dataType.codec()
-										.encodeStart(ops, element)
-										.getOrThrow());
+									E element = dataType.codec()
+										.parse(ops, elementInput)
+										.getOrThrow();
 
-									index++;
+									elements.add(element);
+									inputsBuilder.add(elementInput);
+
+									currentIndex.addAndGet(1);
 
 								}
 
-								catch (DataException de) {
-									throw de.prependArray(index);
-								}
+							});
 
-								catch (Exception e) {
-									throw new DataException(DataException.Phase.WRITING, "[" + index + "]", e.getMessage());
-								}
-
+							if (elements.size() > maxSize) {
+								return createTooLongError(elements.size());
 							}
 
-							return listBuilder.build(prefix);
-
-						}
-
-						catch (Exception e) {
-
-							if (root) {
-								return DataResult.error(e::getMessage);
+							else if (elements.size() < minSize) {
+								return createTooShortError(elements.size());
 							}
 
 							else {
-								throw e;
+
+								T inputs = ops.createList(inputsBuilder.build());
+								List<E> immutableElements = List.copyOf(elements);
+
+								return DataResult.success(Pair.of(immutableElements, inputs));
+
 							}
 
 						}
 
+						catch (DataException de) {
+							throw de.prependArray(currentIndex.get());
+						}
+
+						catch (Exception e) {
+							throw new DataException(DataException.Phase.READING, currentIndex.get(), e);
+						}
+
+					});
+
+				}
+
+				catch (Exception e) {
+
+					if (dataType().isRoot()) {
+						return DataResult.error(e::getMessage);
+					}
+
+					else {
+						throw e;
 					}
 
 				}
 
-			},
-			new PacketCodec<>() {
+			}
 
-				private final Supplier<PacketCodec<RegistryByteBuf, List<E>>> packetCodecSupplier = () -> CalioPacketCodecs.collection(ObjectArrayList::new, dataType.packetCodec());
+			else {
+				return dataType().codec().decode(ops, input)
+					.map(elementAndInput -> elementAndInput
+						.mapFirst(List::of));
+			}
 
-				@Override
-				public List<E> decode(RegistryByteBuf buf) {
-					return packetCodecSupplier.get().decode(buf);
+		}
+
+		@Override
+		public <T> DataResult<T> encode(List<E> listInput, DynamicOps<T> ops, T prefix) {
+
+			ListBuilder<T> listBuilder = ops.listBuilder();
+			int size = listInput.size();
+
+			if (size > maxSize) {
+				return createTooLongError(size);
+			}
+
+			else if (size < minSize) {
+				return createTooShortError(size);
+			}
+
+			else {
+
+				try {
+
+					int index = 0;
+					for (E element : listInput) {
+
+						try {
+
+							listBuilder.add(dataType.codec()
+								.encodeStart(ops, element)
+								.getOrThrow());
+
+							index++;
+
+						}
+
+						catch (DataException de) {
+							throw de.prependArray(index);
+						}
+
+						catch (Exception e) {
+							throw new DataException(DataException.Phase.WRITING, index, e);
+						}
+
+					}
+
+					return listBuilder.build(prefix);
+
 				}
 
-				@Override
-				public void encode(RegistryByteBuf buf, List<E> value) {
-					packetCodecSupplier.get().encode(buf, value);
+				catch (Exception e) {
+
+					if (dataType().isRoot()) {
+						return DataResult.error(e::getMessage);
+					}
+
+					else {
+						throw e;
+					}
+
 				}
 
-			},
-			dataType, min, max);
-	}
+			}
 
-	private static RuntimeException createTooLongError(int size, int max) {
-		return new IllegalStateException("Expected collection to have at most " + max + " element(s), but found " + size + " element(s)!");
-	}
+		}
 
-	private static RuntimeException createTooShortError(int size, int min) {
-		return new IllegalStateException("Expected collection to have at least " + min + " element(s), but only found " + size + " element(s)!");
+		public SerializableDataType<E> dataType() {
+			return dataType;
+		}
+
+		public int minSize() {
+			return minSize;
+		}
+
+		public int maxSize() {
+			return maxSize;
+		}
+
+		private <R> DataResult<R> createTooLongError(int size) {
+			return DataResult.error(() -> "Expected collection to have at most " + maxSize + " element(s); found " + size + " element(s)!");
+		}
+
+		private <R> DataResult<R> createTooShortError(int size) {
+			return DataResult.error(() -> "Expected collection to have at least " + minSize + " element(s); found only " + size + " element(s)!");
+		}
+
 	}
 
 }

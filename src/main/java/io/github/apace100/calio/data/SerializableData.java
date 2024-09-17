@@ -34,7 +34,7 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
 
     protected final boolean root;
 
-    public SerializableData(Map<String, Field<?>> fields, Function<Instance, DataResult<Instance>> validator, boolean root) {
+    protected SerializableData(Map<String, Field<?>> fields, Function<Instance, DataResult<Instance>> validator, boolean root) {
         this.fields = new Object2ObjectLinkedOpenHashMap<>(fields);
         this.validator = validator;
         this.root = root;
@@ -66,15 +66,12 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
             Instance data = instance();
             Map<String, Field<?>> defaultedFields = new Object2ObjectLinkedOpenHashMap<>();
 
-            for (Map.Entry<String, Field<?>> fieldEntry : getFields().entrySet()) {
-
-                String fieldName = fieldEntry.getKey();
-                Field<?> field = fieldEntry.getValue();
+            getFields().forEach((fieldName, field) -> {
 
                 try {
 
                     if (mapInput.get(fieldName) != null) {
-                        data.set(fieldName, field.decode(ops, mapInput.get(fieldName)));
+                        data.set(fieldName, field.read(ops, mapInput.get(fieldName)).getOrThrow());
                     }
 
                     else if (field.hasDefault()) {
@@ -99,7 +96,7 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
                     throw new DataException(DataException.Phase.READING, field.path(), e);
                 }
 
-            }
+            });
 
             defaultedFields.forEach((fieldName, field) -> data.set(fieldName, field.getDefault(data)));
             return DataResult.success(data).flatMap(validator);
@@ -125,15 +122,12 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
 
         try {
 
-            for (Map.Entry<String, Field<?>> fieldEntry : getFields().entrySet()) {
-
-                String fieldName = fieldEntry.getKey();
-                Field<?> field = fieldEntry.getValue();
+            getFields().forEach((fieldName, field) -> {
 
                 try {
 
                     if (input.isPresent(fieldName)) {
-                        prefix.add(fieldName, field.encode(ops, input.get(fieldName)));
+                        prefix.add(fieldName, field.write(ops, input.get(fieldName)).getOrThrow());
                     }
 
                 }
@@ -146,7 +140,7 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
                     throw new DataException(DataException.Phase.WRITING, field.path(), e);
                 }
 
-            }
+            });
 
             return prefix;
 
@@ -184,24 +178,23 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
         Instance data = instance();
         fields.forEach((name, field) -> {
 
-            SerializableDataType<?> dataType = field.dataType();
             try {
 
                 boolean isPresent = buf.readBoolean();
                 boolean hasDefault = buf.readBoolean();
 
                 if (isPresent || hasDefault) {
-                    data.set(name, dataType.receive(buf));
+                    data.set(name, field.receive(buf));
                 }
 
             }
 
             catch (DataException de) {
-                throw de.prepend(name);
+                throw de.prepend(field.path());
             }
 
             catch (Exception e) {
-                throw new DataException(DataException.Phase.RECEIVING, name, e);
+                throw new DataException(DataException.Phase.RECEIVING, field.path(), e);
             }
 
         });
@@ -223,15 +216,14 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
 
         fields.forEach((name, field) -> {
 
-            SerializableDataType dataType = field.dataType();
-            try {
+			try {
 
                 if (data.get(name) != null) {
 
                     buf.writeBoolean(true);
                     buf.writeBoolean(false);
 
-                    dataType.send(buf, data.get(name));
+                    field.send(buf, data.get(name));
 
                 }
 
@@ -240,7 +232,7 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
                     buf.writeBoolean(false);
                     buf.writeBoolean(true);
 
-                    dataType.send(buf, field.getDefault(data));
+                    ((Field) field).send(buf, field.getDefault(data));
 
                 }
 
@@ -254,11 +246,11 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
             }
 
             catch (DataException de) {
-                throw de.prepend(name);
+                throw de.prepend(field.path());
             }
 
             catch (Exception e) {
-                throw new DataException(DataException.Phase.SENDING, name, e);
+                throw new DataException(DataException.Phase.SENDING, field.path(), e);
             }
 
         });
@@ -421,7 +413,7 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
                                 }
 
                                 catch (Exception e) {
-                                    throw new DataException(DataException.Phase.READING, DataException.Type.ARRAY, "[" + index + "]", e.getMessage());
+                                    throw new DataException(DataException.Phase.READING, index, e);
                                 }
 
                             }
@@ -567,27 +559,30 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
 
         SerializableDataType<E> dataType();
 
-        <I> E decode(DynamicOps<I> ops, I input);
+        default <I> DataResult<E> read(DynamicOps<I> ops, I input) {
+            return dataType().read(ops, input);
+        }
 
-        <I> I encode(DynamicOps<I> ops, E input);
+        default <I> DataResult<I> write(DynamicOps<I> ops, E input) {
+            return dataType().write(ops, input);
+        }
+
+        default E receive(RegistryByteBuf buf) {
+            return dataType().receive(buf);
+        }
+
+        default void send(RegistryByteBuf buf, E input) {
+            dataType().send(buf, input);
+        }
 
         E getDefault(SerializableData.Instance data);
 
         boolean hasDefault();
 
+
     }
 
     public record FieldImpl<E>(String path, SerializableDataType<E> dataType) implements Field<E> {
-
-        @Override
-        public <I> E decode(DynamicOps<I> ops, I input) {
-            return dataType().read(ops, input);
-        }
-
-        @Override
-        public <I> I encode(DynamicOps<I> ops, E input) {
-            return dataType().write(ops, input);
-        }
 
         @Override
         public E getDefault(Instance data) {
@@ -604,16 +599,6 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
     public record FunctionedFieldImpl<E>(String path, SerializableDataType<E> dataType, Function<Instance, E> defaultFunction) implements Field<E> {
 
         @Override
-        public <I> E decode(DynamicOps<I> ops, I input) {
-            return dataType().read(ops, input);
-        }
-
-        @Override
-        public <I> I encode(DynamicOps<I> ops, E input) {
-            return dataType().write(ops, input);
-        }
-
-        @Override
         public E getDefault(Instance data) {
             return defaultFunction().apply(data);
         }
@@ -628,16 +613,6 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
     public record OptionalFieldImpl<E>(String path, SerializableDataType<E> dataType, Supplier<E> defaultSupplier) implements Field<E> {
 
         @Override
-        public <I> E decode(DynamicOps<I> ops, I input) {
-            return dataType().read(ops, input);
-        }
-
-        @Override
-        public <I> I encode(DynamicOps<I> ops, E input) {
-            return dataType().write(ops, input);
-        }
-
-        @Override
         public E getDefault(Instance data) {
             return defaultSupplier().get();
         }
@@ -645,6 +620,30 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
         @Override
         public boolean hasDefault() {
             return true;
+        }
+
+    }
+
+    public record DelegateFieldImpl<E>(Supplier<Field<E>> delegate) implements Field<E> {
+
+        @Override
+        public String path() {
+            return delegate().get().path();
+        }
+
+        @Override
+        public SerializableDataType<E> dataType() {
+            return delegate().get().dataType();
+        }
+
+        @Override
+        public E getDefault(Instance data) {
+            return delegate().get().getDefault(data);
+        }
+
+        @Override
+        public boolean hasDefault() {
+            return delegate().get().hasDefault();
         }
 
     }

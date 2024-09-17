@@ -46,9 +46,18 @@ public class SerializableDataType<T> {
     private final Codec<T> codec;
     private final PacketCodec<RegistryByteBuf, T> packetCodec;
 
-    public SerializableDataType(Codec<T> codec, PacketCodec<RegistryByteBuf, T> packetCodec) {
+    private final Optional<String> name;
+    private final boolean root;
+
+    public SerializableDataType(Codec<T> codec, PacketCodec<RegistryByteBuf, T> packetCodec, Optional<String> name, boolean root) {
         this.codec = codec;
         this.packetCodec = packetCodec;
+        this.name = name;
+        this.root = root;
+    }
+
+    public SerializableDataType(Codec<T> codec, PacketCodec<RegistryByteBuf, T> packetCodec) {
+        this(codec, packetCodec, Optional.empty(), true);
     }
 
     public SerializableDataType(Codec<T> codec) {
@@ -64,6 +73,15 @@ public class SerializableDataType<T> {
         this(new JsonCodec<>(fromJson, toJson), PacketCodec.of((value, buf) -> send.accept(buf, value), receive::apply));
     }
 
+    public Optional<String> getName() {
+        return name;
+    }
+
+    @Override
+    public String toString() {
+        return name.orElseGet(super::toString);
+    }
+
     public Codec<T> codec() {
         return codec;
     }
@@ -72,12 +90,12 @@ public class SerializableDataType<T> {
         return packetCodec;
     }
 
-    public <I> T read(DynamicOps<I> ops, I input) {
-        return this.codec().parse(ops, input).getOrThrow();
+    public <I> DataResult<T> read(DynamicOps<I> ops, I input) {
+        return this.codec().parse(ops, input);
     }
 
-    public <I> I write(DynamicOps<I> ops, T input) {
-        return this.codec().encodeStart(ops, input).getOrThrow();
+    public <I> DataResult<I> write(DynamicOps<I> ops, T input) {
+        return this.codec().encodeStart(ops, input);
     }
 
     public T receive(RegistryByteBuf buf) {
@@ -93,7 +111,7 @@ public class SerializableDataType<T> {
      */
     @Deprecated
     public T read(JsonElement jsonElement) {
-        return read(JsonOps.INSTANCE, jsonElement);
+        return read(JsonOps.INSTANCE, jsonElement).getOrThrow();
     }
 
     /**
@@ -117,7 +135,7 @@ public class SerializableDataType<T> {
      */
     @Deprecated
     public JsonElement write(T value) {
-        return write(JsonOps.INSTANCE, value);
+        return write(JsonOps.INSTANCE, value).getOrThrow();
     }
 
     public T cast(Object data) {
@@ -165,7 +183,11 @@ public class SerializableDataType<T> {
     }
 
     public SerializableDataType<T> setRoot(boolean root) {
-        return this;
+        return new SerializableDataType<>(this.codec, this.packetCodec, this.name, root);
+    }
+
+    public boolean isRoot() {
+        return root;
     }
 
     public SerializableData.Field<T> field(String name) {
@@ -209,7 +231,7 @@ public class SerializableDataType<T> {
     }
 
     public static <T> SerializableDataTypeList<T> list(SerializableDataType<T> singleDataType, int min, int max) {
-        return SerializableDataTypeList.of(singleDataType, min, max);
+        return new SerializableDataTypeList<>(new SerializableDataTypeList.CustomCodec<>(singleDataType, min, max), CalioPacketCodecs.collection(ObjectArrayList::new, singleDataType::packetCodec, max));
     }
 
     public static <T> SerializableDataType<WeightedList<T>> weightedList(SerializableDataType<T> singleDataType) {
@@ -379,14 +401,49 @@ public class SerializableDataType<T> {
 
 				@Override
 				public <I> DataResult<T> decode(DynamicOps<I> ops, MapLike<I> input) {
-					return _serializableData.decode(ops, input)
-						.map(data -> this.fromData(ops, data));
+					return _serializableData.decode(ops, input).flatMap(data -> {
+
+                        try {
+                            return DataResult.success(this.fromData(ops, data));
+                        }
+
+                        catch (Exception e) {
+
+                            if (_serializableData.isRoot()) {
+                                return DataResult.error(e::getMessage);
+                            }
+
+                            else {
+                                throw e;
+                            }
+
+                        }
+
+                    });
 				}
 
 				@Override
 				public <I> RecordBuilder<I> encode(T input, DynamicOps<I> ops, RecordBuilder<I> prefix) {
-					SerializableData.Instance data = this.toData(input, ops, _serializableData);
+
+                    SerializableData.Instance data;
+                    try {
+                        data = this.toData(input, ops, _serializableData);
+                    }
+
+                    catch (Exception e) {
+
+                        if (_serializableData.isRoot()) {
+                            return prefix.withErrorsFrom(DataResult.error(e::getMessage));
+                        }
+
+                        else {
+                            throw e;
+                        }
+
+                    }
+
 					return _serializableData.encode(data, ops, prefix);
+
 				}
 
 			},

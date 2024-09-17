@@ -5,9 +5,9 @@ import io.github.apace100.calio.codec.CompoundMapCodec;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
@@ -16,11 +16,15 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
     private final Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter;
     private final BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter;
 
-    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter) {
-        super(null, null);
+    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter, Optional<String> name, boolean root) {
+        super(null, null, name, root);
         this.serializableData = serializableData;
         this.compoundCodecGetter = compoundCodecGetter;
         this.packetCodecGetter = packetCodecGetter;
+    }
+
+    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter) {
+        this(serializableData, compoundCodecGetter, packetCodecGetter, Optional.empty(), true);
     }
 
     @Override
@@ -33,23 +37,9 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
         return packetCodecGetter.apply(serializableData(), mapCodec());
     }
 
+    @Override
     public CompoundSerializableDataType<T> setRoot(boolean root) {
-        return new CompoundSerializableDataType<>(serializableData().setRoot(root), this.compoundCodecGetter, this.packetCodecGetter);
-    }
-
-    @Override
-    public SerializableData.Field<T> field(String name) {
-        return new SerializableData.FieldImpl<>(name, setRoot(false));
-    }
-
-    @Override
-    public SerializableData.Field<T> field(String name, Supplier<T> defaultSupplier) {
-        return new SerializableData.OptionalFieldImpl<>(name, setRoot(false), defaultSupplier);
-    }
-
-    @Override
-    public SerializableData.Field<T> functionedField(String name, Function<SerializableData.Instance, T> defaultFunction) {
-        return new SerializableData.FunctionedFieldImpl<>(name, setRoot(false), defaultFunction);
+        return new CompoundSerializableDataType<>(serializableData().setRoot(root), this.compoundCodecGetter, this.packetCodecGetter, this.getName(), root);
     }
 
     public SerializableData serializableData() {

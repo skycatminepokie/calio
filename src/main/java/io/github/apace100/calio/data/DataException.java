@@ -8,8 +8,8 @@ public class DataException extends RuntimeException {
     private final String path;
     private final String exceptionMessage;
 
-    public DataException(Phase phase, Type type, String path, String exceptionMessage) {
-        super("Error " + phase + " data field");
+    protected DataException(String baseMessage, Phase phase, Type type, String path, String exceptionMessage) {
+        super(baseMessage);
         this.phase = phase;
         this.type = type;
         this.path = path;
@@ -17,26 +17,36 @@ public class DataException extends RuntimeException {
     }
 
     public DataException(Phase phase, String path, String exceptionMessage) {
-        this(phase, Type.OBJECT, path, exceptionMessage);
+        this("Error " + phase + " data at field", phase, Type.OBJECT, path, exceptionMessage);
     }
 
     public DataException(Phase phase, String path, Exception exception) {
-        this(phase, Type.OBJECT, path, exception.getMessage());
+        this(phase, path, exception.getMessage());
+    }
+
+    public DataException(Phase phase, int index, String exceptionMessage) {
+        this("Error " + phase + " element at index", phase, Type.ARRAY, "[" + index + "]", exceptionMessage);
+    }
+
+    public DataException(Phase phase, int index, Exception exception) {
+        this(phase, index, exception.getMessage());
     }
 
     public DataException prependArray(int index) {
         String processedPath = "[" + index + "]" + (this.path.isEmpty() ? "" : ".") + this.path;
-        return new DataException(this.phase, Type.ARRAY, processedPath, this.exceptionMessage);
+        return new DataException(super.getMessage(), this.phase, Type.ARRAY, processedPath, this.exceptionMessage);
     }
 
     public DataException prepend(String path) {
-        String processedPath = path + (this.type == Type.ARRAY || this.path.isEmpty() ? "" : ".") + this.path;
-        return new DataException(this.phase, Type.OBJECT, processedPath, this.exceptionMessage);
+        String separator = this.type == Type.ARRAY || this.path.isEmpty() ? "" : ".";
+        return new DataException(super.getMessage(), this.phase, Type.OBJECT, path + separator + this.path, this.exceptionMessage);
     }
 
     @Override
     public String getMessage() {
-        return super.getMessage() + " at " + path + ": " + exceptionMessage;
+        return this.path.isEmpty()
+            ? this.exceptionMessage
+            : super.getMessage() + " " + this.path + ": " + this.exceptionMessage;
     }
 
     public enum Type {
