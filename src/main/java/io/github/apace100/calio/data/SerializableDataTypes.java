@@ -7,8 +7,12 @@ import com.mojang.serialization.*;
 import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.CalioCodecs;
 import io.github.apace100.calio.codec.CalioPacketCodecs;
+import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
 import io.github.apace100.calio.util.*;
+import net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredient;
+import net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientImpl;
+import net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientPacketCodec;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.enums.CameraSubmersionType;
@@ -32,6 +36,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.loot.condition.LootCondition;
 import net.minecraft.loot.function.LootFunction;
 import net.minecraft.nbt.*;
+import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
 import net.minecraft.particle.ParticleEffect;
 import net.minecraft.particle.ParticleType;
@@ -214,17 +219,273 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<TagKey<EntityType<?>>> ENTITY_TAG = SerializableDataType.tagKey(RegistryKeys.ENTITY_TYPE);
 
-    public static final SerializableDataType<Ingredient.Entry> INGREDIENT_ENTRY = SerializableDataType.of(Ingredient.Entry.CODEC);
+	private static final SerializableDataType<Ingredient.StackEntry> INLINE_INGREDIENT_STACK_ENTRY = ITEM
+		.xmap(ItemStack::new, ItemStack::getItem)
+		.xmap(Ingredient.StackEntry::new, Ingredient.StackEntry::stack);
 
-    public static final SerializableDataType<List<Ingredient.Entry>> INGREDIENT_ENTRIES = INGREDIENT_ENTRY.list();
+	private static final SerializableDataType<Ingredient.TagEntry> INLINE_INGREDIENT_TAG_ENTRY = SerializableDataType.of(
+		new Codec<>() {
+
+			@Override
+			public <T> DataResult<Pair<Ingredient.TagEntry, T>> decode(DynamicOps<T> ops, T input) {
+				return ops.getStringValue(input)
+					.flatMap(str -> str.startsWith("#")
+						? DataResult.success(str.substring(1))
+						: DataResult.error(() -> "Item tags must start with '#'!"))
+					.flatMap(str -> ITEM_TAG.codec().decode(ops, ops.createString(str))
+						.map(tagAndInput -> tagAndInput
+							.mapFirst(Ingredient.TagEntry::new)));
+			}
+
+			@Override
+			public <T> DataResult<T> encode(Ingredient.TagEntry input, DynamicOps<T> ops, T prefix) {
+				return DataResult.success(ops.createString("#" + input.tag().id()));
+			}
+
+		},
+		ITEM_TAG.packetCodec().xmap(Ingredient.TagEntry::new, Ingredient.TagEntry::tag)
+	);
+
+	/**
+	 * 	<p>A data type for decoding/encoding a {@link Ingredient.Entry} formatted as a string, either with a {@code #} prefix
+	 * 	 (to define an item tag, e:g {@code #minecraft:meat}) or no prefix (to define an item,
+	 * 	 e.g: {@code minecraft:diamond}).</p>
+	 *
+	 * 	 <p>This data type also allows for defining an empty item stack entry (e.g: {@code minecraft:air}), compared to
+	 * 	 {@link Ingredient.Entry#CODEC}, which doesn't.</p>
+	 */
+	public static final SerializableDataType<Ingredient.Entry> INLINE_INGREDIENT_ENTRY = SerializableDataType.of(
+		new Codec<>() {
+
+			@Override
+			public <T> DataResult<Pair<Ingredient.Entry, T>> decode(DynamicOps<T> ops, T input) {
+				return ops.getStringValue(input).flatMap(stringInput -> {
+
+					DataResult<Pair<Ingredient.Entry, T>> stackResult = INLINE_INGREDIENT_STACK_ENTRY
+						.read(ops, input)
+						.map(entry -> Pair.of(entry, input));
+
+					if (stackResult.isSuccess()) {
+						return stackResult;
+					}
+
+					DataResult<Pair<Ingredient.Entry, T>> tagResult = INLINE_INGREDIENT_TAG_ENTRY
+						.read(ops, input)
+						.map(entry -> Pair.of(entry, input));
+
+					if (tagResult.isSuccess()) {
+						return tagResult;
+					}
+
+					StringBuilder errorBuilder = new StringBuilder("Couldn't decode ingredient entry");
+
+					stackResult.ifError(error -> errorBuilder
+						.append(" as an item (").append(error.message()).append(")"));
+					tagResult.ifError(error -> errorBuilder
+						.append(" or as a tag (").append(error.message()).append(")"));
+
+					return DataResult.error(errorBuilder::toString);
+
+				});
+			}
+
+			@Override
+			public <T> DataResult<T> encode(Ingredient.Entry input, DynamicOps<T> ops, T prefix) {
+				return switch (input) {
+					case Ingredient.StackEntry stackEntry ->
+						INLINE_INGREDIENT_STACK_ENTRY.codec().encode(stackEntry, ops, prefix);
+					case Ingredient.TagEntry tagEntry ->
+						INLINE_INGREDIENT_TAG_ENTRY.codec().encode(tagEntry, ops, prefix);
+					default -> DataResult.error(() -> "Ingredient entry is not an item or tag!");
+				};
+			}
+		},
+		PacketCodec.ofStatic(
+			(buf, value) -> {
+				switch (value) {
+					case Ingredient.StackEntry stackEntry -> {
+						buf.writeByte(0);
+						INLINE_INGREDIENT_STACK_ENTRY.send(buf, stackEntry);
+					}
+					case Ingredient.TagEntry tagEntry -> {
+						buf.writeByte(1);
+						INLINE_INGREDIENT_TAG_ENTRY.send(buf, tagEntry);
+					}
+					default ->
+						throw new UnsupportedOperationException("Ingredient entry is not an item or a tag!");
+				}
+			},
+			buf -> {
+				byte type = buf.readByte();
+				return switch (type) {
+					case 0 ->
+						INLINE_INGREDIENT_STACK_ENTRY.receive(buf);
+					case 1 ->
+						INLINE_INGREDIENT_TAG_ENTRY.receive(buf);
+					default ->
+						throw new UnsupportedOperationException("Ingredient entry is not an item or a tag!");
+				};
+			}
+		)
+	);
+
+	/**
+	 * 	<p>A data type for decoding/encoding a {@link Ingredient.Entry} formatted as an object with a {@code tag} key
+	 * 	(to define an item tag, e.g: {@code {"tag": "minecraft:meat"}}) or an {@code item} key (to define an item, e.g:
+	 * 	{@code {"item": "minecraft:diamond"}}</p>
+	 *
+	 * 	 <p>This data type also allows for defining an empty item stack entry (e.g: {@code minecraft:air}), compared to
+	 * 	 {@link Ingredient.Entry#CODEC}, which doesn't. This is <b>deprecated</b> in favor of using
+	 * 	 {@link #INLINE_INGREDIENT_ENTRY} since vanilla will use a similar format in the future.</p>
+	 */
+	@Deprecated(since = "1.14.0-alpha.7")
+	public static final SerializableDataType<Ingredient.Entry> OBJECT_INGREDIENT_ENTRY = SerializableDataType.compound(
+		new SerializableData()
+			.add("item", ITEM, null)
+			.add("tag", ITEM_TAG, null)
+			.validate(data -> {
+
+				boolean hasItem = data.isPresent("item");
+				boolean hasTag = data.isPresent("tag");
+
+				if (hasItem == hasTag) {
+					return DataResult.error(() -> (hasItem ? "Both" : "Any of") + " \"item\" and \"tag\" fields " + (hasItem ? "shouldn't" : "must") + " be defined!");
+				}
+
+				else {
+					return DataResult.success(data);
+				}
+
+			}),
+		data -> {
+
+			if (data.isPresent("item")) {
+
+				Item item = data.get("item");
+				ItemStack stack = new ItemStack(item);
+
+				return new Ingredient.StackEntry(stack);
+
+			}
+
+			else {
+				return new Ingredient.TagEntry(data.get("tag"));
+			}
+
+		},
+		(entry, serializableData) -> {
+			SerializableData.Instance data = serializableData.instance();
+			return switch (entry) {
+				case Ingredient.StackEntry stackEntry ->
+					data.set("item", stackEntry.stack().getItem());
+				case Ingredient.TagEntry tagEntry ->
+					data.set("tag", tagEntry.tag());
+				default ->
+					throw new UnsupportedOperationException("Ingredient entry is not an item or a tag!");
+			};
+		}
+	);
+
+	/**
+	 * 	A data type for decoding/encoding an {@link Ingredient.Entry} either as an object or a string.
+	 * 	@see #INLINE_INGREDIENT_ENTRY
+	 *  @see #OBJECT_INGREDIENT_ENTRY
+	 */
+    public static final SerializableDataType<Ingredient.Entry> INGREDIENT_ENTRY = SerializableDataType.recursive(dataType -> SerializableDataType.of(
+		new Codec<>() {
+
+			@Override
+			public <T> DataResult<Pair<Ingredient.Entry, T>> decode(DynamicOps<T> ops, T input) {
+
+				if (ops.getMap(input).isSuccess()) {
+					return OBJECT_INGREDIENT_ENTRY.setRoot(dataType.isRoot()).codec().decode(ops, input);
+				}
+
+				else {
+					return INLINE_INGREDIENT_ENTRY.codec().decode(ops, input);
+				}
+
+			}
+
+			@Override
+			public <T> DataResult<T> encode(Ingredient.Entry input, DynamicOps<T> ops, T prefix) {
+				return INLINE_INGREDIENT_ENTRY.codec().encode(input, ops, prefix);
+			}
+
+		},
+		INLINE_INGREDIENT_ENTRY.packetCodec()
+	));
+
+    public static final SerializableDataType<List<Ingredient.Entry>> INGREDIENT_ENTRIES = INGREDIENT_ENTRY.list(1, Integer.MAX_VALUE);
+
+    @SuppressWarnings("UnstableApiUsage")
+	private static final Codec<CustomIngredient> CUSTOM_INGREDIENT_CODEC = CustomIngredientImpl.CODEC.dispatch(
+        CustomIngredientImpl.TYPE_KEY,
+        CustomIngredient::getSerializer,
+        serializer -> serializer.getCodec(false)
+    );
 
     /**
-     *  An alternative version of {@link Ingredient} codec as a data type that allows for `minecraft:air`
+	 *  <p>A data type version of {@link Ingredient#DISALLOW_EMPTY_CODEC} that allows for
+	 *  empty item stacks (e.g: {@code "minecraft:air"}), and inline references for items/item tags.</p>
+	 *
+	 * 	@see #INLINE_INGREDIENT_ENTRY
+	 * 	@see #OBJECT_INGREDIENT_ENTRY
      */
-    public static final SerializableDataType<Ingredient> INGREDIENT = SerializableDataType.lazy(() -> SerializableDataType.of(CalioCodecs.ingredient(false), Ingredient.PACKET_CODEC));
+    @SuppressWarnings("UnstableApiUsage")
+	public static final SerializableDataType<Ingredient> INGREDIENT = SerializableDataType.recursive(dataType -> SerializableDataType.of(
+		new Codec<>() {
+
+			@Override
+			public <T> DataResult<Pair<Ingredient, T>> decode(DynamicOps<T> ops, T input) {
+
+				//	Check if the input has the type key used by Fabric's custom ingredients
+				boolean hasFabricTypeKey = ops.getMap(input)
+					.map(map -> map.get(CustomIngredientImpl.TYPE_KEY))
+					.mapOrElse(Objects::nonNull, err -> false);
+
+				//	...and if it does, decode the input as a Fabric custom ingredient
+				if (hasFabricTypeKey) {
+					return CUSTOM_INGREDIENT_CODEC.decode(ops, input)
+						.map(customIngredientAndInput -> customIngredientAndInput
+							.mapFirst(CustomIngredient::toVanilla));
+				}
+
+				//	Otherwise, decode the input as a vanilla ingredient
+				else {
+					return INGREDIENT_ENTRIES.setRoot(dataType.isRoot()).codec().decode(ops, input)
+						.map(entriesAndInput -> entriesAndInput
+							.mapFirst(entries -> entries.toArray(Ingredient.Entry[]::new))
+							.mapFirst(Ingredient::new));
+				}
+
+			}
+
+			@Override
+			public <T> DataResult<T> encode(Ingredient input, DynamicOps<T> ops, T prefix) {
+
+                if (input.getCustomIngredient() != null) {
+                    return CUSTOM_INGREDIENT_CODEC.encode(input.getCustomIngredient(), ops, prefix);
+                }
+
+                else {
+					return INGREDIENT_ENTRIES.codec().encode(Arrays.stream(((IngredientAccessor) input).getEntries()).toList(), ops, prefix);
+                }
+
+			}
+
+		},
+        new CustomIngredientPacketCodec(ItemStack.OPTIONAL_LIST_PACKET_CODEC.xmap(
+            itemStacks -> Ingredient.ofEntries(itemStacks
+                .stream()
+                .map(Ingredient.StackEntry::new)),
+            ingredient ->
+                Arrays.asList(ingredient.getMatchingStacks())
+        ))
+    ));
 
     /**
-     *  The regular {@link Ingredient} codec as a data type
+     *  A data type version of {@link Ingredient#DISALLOW_EMPTY_CODEC}
      */
     public static final SerializableDataType<Ingredient> VANILLA_INGREDIENT = SerializableDataType.of(Ingredient.DISALLOW_EMPTY_CODEC, Ingredient.PACKET_CODEC);
 
