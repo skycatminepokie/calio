@@ -143,19 +143,19 @@ public class SerializableDataType<T> {
     }
 
     public <S> SerializableDataType<S> xmap(Function<? super T, ? extends S> to, Function<? super S, ? extends T> from) {
-        return new SerializableDataType<>(codec().xmap(to, from), packetCodec().xmap(to, from));
+        return new SerializableDataType<>(codec().xmap(to, from), packetCodec().xmap(to, from), this.getName(), this.isRoot());
     }
 
     public <S> SerializableDataType<S> comapFlatMap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends T> from) {
-        return new SerializableDataType<>(codec().comapFlatMap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), from));
+        return new SerializableDataType<>(codec().comapFlatMap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), from), this.getName(), this.isRoot());
     }
 
     public <S> SerializableDataType<S> flatComapMap(Function<? super T, ? extends S> to, Function<? super S, ? extends DataResult<? extends T>> from) {
-        return new SerializableDataType<>(codec().flatComapMap(to, from), packetCodec().xmap(to, s -> from.apply(s).getOrThrow()));
+        return new SerializableDataType<>(codec().flatComapMap(to, from), packetCodec().xmap(to, s -> from.apply(s).getOrThrow()), this.getName(), this.isRoot());
     }
 
     public <S> SerializableDataType<S> flatXmap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends DataResult<? extends T>> from) {
-        return new SerializableDataType<>(codec().flatXmap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), s -> from.apply(s).getOrThrow()));
+        return new SerializableDataType<>(codec().flatXmap(to, from), packetCodec().xmap(t -> to.apply(t).getOrThrow(), s -> from.apply(s).getOrThrow()), this.getName(), this.isRoot());
     }
 
     public SerializableDataType<List<T>> list() {
@@ -946,15 +946,15 @@ public class SerializableDataType<T> {
     }
 
     public static <A> SerializableDataType<Optional<A>> optional(SerializableDataType<A> dataType, boolean lenient, Consumer<String> warningHandler) {
-        return of(
+        return recursive(optDt -> of(
             new Codec<>() {
 
                 @Override
                 public <T> DataResult<Pair<Optional<A>, T>> decode(DynamicOps<T> ops, T input) {
-                    return dataType.codec().decode(ops, input)
+                    return dataType.setRoot(optDt.isRoot()).codec().decode(ops, input)
                         .map(aAndInput -> aAndInput.mapFirst(Optional::of))
                         .mapOrElse(
-							DataResult::success,
+                            DataResult::success,
                             error -> {
 
                                 if (lenient) {
@@ -973,7 +973,7 @@ public class SerializableDataType<T> {
                 @Override
                 public <T> DataResult<T> encode(Optional<A> input, DynamicOps<T> ops, T prefix) {
                     return input
-                        .map(a -> dataType.codec().encodeStart(ops, a))
+                        .map(a -> dataType.setRoot(optDt.isRoot()).codec().encodeStart(ops, a))
                         .orElse(DataResult.success(prefix));
                 }
 
@@ -981,13 +981,13 @@ public class SerializableDataType<T> {
             PacketCodec.ofStatic(
                 (buf, optional) -> {
                     buf.writeBoolean(optional.isPresent());
-                    optional.ifPresent(a -> dataType.send(buf, a));
+                    optional.ifPresent(a -> dataType.setRoot(optDt.isRoot()).send(buf, a));
                 },
                 buf -> buf.readBoolean()
-                    ? Optional.of(dataType.receive(buf))
+                    ? Optional.of(dataType.setRoot(optDt.isRoot()).receive(buf))
                     : Optional.empty()
             )
-        );
+        ));
     }
 
 }
