@@ -10,6 +10,7 @@ import io.github.apace100.calio.codec.CalioPacketCodecs;
 import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
 import io.github.apace100.calio.util.*;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredient;
 import net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientImpl;
 import net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientPacketCodec;
@@ -248,7 +249,7 @@ public final class SerializableDataTypes {
 
 	/**
 	 * 	<p>A data type for decoding/encoding a {@link Ingredient.Entry} formatted as a string, either with a {@code #} prefix
-	 * 	 (to define an item tag, e:g {@code #minecraft:meat}) or no prefix (to define an item,
+	 * 	 (to define an item tag, e.g: {@code #minecraft:meat}) or no prefix (to define an item,
 	 * 	 e.g: {@code minecraft:diamond}).</p>
 	 *
 	 * 	 <p>This data type also allows for defining an empty item stack entry (e.g: {@code minecraft:air}), compared to
@@ -296,7 +297,8 @@ public final class SerializableDataTypes {
 						INLINE_INGREDIENT_STACK_ENTRY.codec().encode(stackEntry, ops, prefix);
 					case Ingredient.TagEntry tagEntry ->
 						INLINE_INGREDIENT_TAG_ENTRY.codec().encode(tagEntry, ops, prefix);
-					default -> DataResult.error(() -> "Ingredient entry is not an item or tag!");
+					default ->
+						DataResult.error(() -> "Ingredient entry is not an item or tag!");
 				};
 			}
 		},
@@ -418,6 +420,8 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<Ingredient.Entry>> INGREDIENT_ENTRIES = INGREDIENT_ENTRY.list(1, Integer.MAX_VALUE);
 
+	private static final SerializableDataType<Ingredient.Entry[]> INGREDIENT_ENTRIES_ARRAY = INGREDIENT_ENTRIES.xmap(entries -> entries.toArray(Ingredient.Entry[]::new), ObjectArrayList::new);
+
     @SuppressWarnings("UnstableApiUsage")
 	private static final Codec<CustomIngredient> CUSTOM_INGREDIENT_CODEC = CustomIngredientImpl.CODEC.dispatch(
         CustomIngredientImpl.TYPE_KEY,
@@ -453,9 +457,8 @@ public final class SerializableDataTypes {
 
 				//	Otherwise, decode the input as a vanilla ingredient
 				else {
-					return INGREDIENT_ENTRIES.setRoot(dataType.isRoot()).codec().decode(ops, input)
+					return INGREDIENT_ENTRIES_ARRAY.setRoot(dataType.isRoot()).codec().decode(ops, input)
 						.map(entriesAndInput -> entriesAndInput
-							.mapFirst(entries -> entries.toArray(Ingredient.Entry[]::new))
 							.mapFirst(Ingredient::new));
 				}
 
@@ -469,7 +472,7 @@ public final class SerializableDataTypes {
                 }
 
                 else {
-					return INGREDIENT_ENTRIES.codec().encode(Arrays.stream(((IngredientAccessor) input).getEntries()).toList(), ops, prefix);
+					return INGREDIENT_ENTRIES_ARRAY.setRoot(dataType.isRoot()).codec().encode(((IngredientAccessor) input).getEntries(), ops, prefix);
                 }
 
 			}
@@ -632,7 +635,8 @@ public final class SerializableDataTypes {
             return stack;
 
         },
-        (stack, ops, serializableData) -> UNCOUNTED_ITEM_STACK.toData(stack, ops, serializableData)
+        (stack, ops, serializableData) -> UNCOUNTED_ITEM_STACK
+			.toData(stack, ops, serializableData)
             .set("count", ((ItemStackAccessor) (Object) stack).getCountOverride())
     );
 
