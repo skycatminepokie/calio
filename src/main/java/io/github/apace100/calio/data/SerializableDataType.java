@@ -646,35 +646,36 @@ public class SerializableDataType<T> {
     }
 
     public static <A> SerializableDataType<RegistryEntry<A>> registryEntry(Registry<A> registry) {
-        return lazy(() -> new SerializableDataType<>(
-            new Codec<>() {
+        return new SerializableDataType<>(
+			new Codec<>() {
 
-                private final RegistryKey<? extends Registry<A>> registryRef = registry.getKey();
-                private final SerializableDataType<RegistryKey<A>> keyDataType = registryKey(registryRef);
+				@Override
+				public <T> DataResult<Pair<RegistryEntry<A>, T>> decode(DynamicOps<T> ops, T input) {
+					return SerializableDataTypes.IDENTIFIER.codec().decode(ops, input)
+                        .flatMap(idAndInput -> {
 
-                @Override
-                public <T> DataResult<Pair<RegistryEntry<A>, T>> decode(DynamicOps<T> ops, T input) {
-                    return keyDataType.codec().parse(ops, input)
-                        .flatMap(key -> registry.getEntry(key)
-                            .map(entry -> (RegistryEntry<A>) entry)
-                            .map(entry -> Pair.of(entry, input))
-                            .map(DataResult::success)
-                            .orElseThrow());
-                }
+                            Pair<RegistryKey<A>, T> keyAndInput = idAndInput.mapFirst(id -> RegistryKey.of(registry.getKey(), id));
+                            RegistryKey<A> key = keyAndInput.getFirst();
 
-                @Override
-                public <T> DataResult<T> encode(RegistryEntry<A> input, DynamicOps<T> ops, T prefix) {
-                    return input.getKey()
-                        .map(RegistryKey::getValue)
-                        .map(Identifier::toString)
-                        .map(ops::createString)
-                        .map(DataResult::success)
-                        .orElse(DataResult.error(() -> input + " is not registered in registry \"" + registryRef.getValue() + "\"!"));
-                }
+                            return registry.getEntry(key)
+                                .map(entry -> keyAndInput.mapFirst(k -> (RegistryEntry<A>) entry))
+                                .map(DataResult::success)
+                                .orElse(DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registry.getKey().getValue() + "\"!"));
 
-            },
+                        });
+				}
+
+				@Override
+				public <T> DataResult<T> encode(RegistryEntry<A> input, DynamicOps<T> ops, T prefix) {
+					return input.getKeyOrValue().map(
+                        key -> SerializableDataTypes.IDENTIFIER.codec().encode(key.getValue(), ops, prefix),
+                        a -> registry.getCodec().encode(a, ops, prefix)
+                    );
+				}
+
+			},
             PacketCodecs.registryEntry(registry.getKey())
-        ));
+        );
     }
 
     public static <T> SerializableDataType<RegistryKey<T>> registryKey(RegistryKey<? extends Registry<T>> registryRef) {
@@ -699,7 +700,7 @@ public class SerializableDataType<T> {
 
                             else {
                                 return Calio.getOptionalEntry(ops, key)
-                                    .map(entries -> keyAndInput)
+                                    .map(ref -> keyAndInput)
                                     .map(DataResult::success)
                                     .orElse(DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!"));
                             }
