@@ -322,7 +322,7 @@ public class SerializableDataType<T> {
     public static <T> SerializableDataType<T> registry(Registry<T> registry, String defaultNamespace, boolean showPossibleValues) {
         return registry(registry, defaultNamespace, null, (reg, id) -> {
             String possibleValues = showPossibleValues ? " Expected value to be any of " + String.join(", ", reg.getIds().stream().map(Identifier::toString).toList()) : "";
-            return "Type \"%s\" is not registered in registry \"%s\".%s".formatted(id, registry.getKey().getValue(), possibleValues);
+            return "Type \"%s\" is not registered in registry \"%s\"!%s".formatted(id, registry.getKey().getValue(), possibleValues);
         });
     }
 
