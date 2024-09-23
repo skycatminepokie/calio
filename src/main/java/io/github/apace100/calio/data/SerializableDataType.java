@@ -758,6 +758,7 @@ public class SerializableDataType<T> {
 
                     else {
                         return ops.getStringValue(input)
+                            .map(stringInput -> stringInput.toUpperCase(Locale.ROOT))
                             .flatMap(stringInput -> {
 
                                 Map<String, E> additionalMap = additionalMapSupplier.get();
