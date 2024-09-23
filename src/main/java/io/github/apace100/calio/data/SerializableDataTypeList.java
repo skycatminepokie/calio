@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 public class SerializableDataTypeList<E> extends SerializableDataType<List<E>> {
@@ -29,6 +30,110 @@ public class SerializableDataTypeList<E> extends SerializableDataType<List<E>> {
 	@Override
 	public CustomCodec<E> codec() {
 		return (CustomCodec<E>) super.codec();
+	}
+
+	@Override
+	public <S> SerializableDataType<S> xmap(Function<? super List<E>, ? extends S> to, Function<? super S, ? extends List<E>> from) {
+		SerializableDataTypeList<E> self = this;
+		return recursive(dataType -> new SerializableDataType<>(
+			new Codec<>() {
+
+				@Override
+				public <T> DataResult<Pair<S, T>> decode(DynamicOps<T> ops, T input) {
+					return self.setRoot(dataType.isRoot()).codec().decode(ops, input)
+						.map(listAndInput -> listAndInput
+							.mapFirst(to));
+				}
+
+				@Override
+				public <T> DataResult<T> encode(S input, DynamicOps<T> ops, T prefix) {
+					return self.setRoot(dataType.isRoot()).codec().encode(from.apply(input), ops, prefix);
+				}
+
+			},
+			packetCodec().xmap(to, from),
+			dataType.getName(),
+			dataType.isRoot()
+		));
+	}
+
+	@Override
+	public <S> SerializableDataType<S> comapFlatMap(Function<? super List<E>, ? extends DataResult<? extends S>> to, Function<? super S, ? extends List<E>> from) {
+		SerializableDataTypeList<E> self = this;
+		return recursive(dataType -> new SerializableDataType<>(
+			new Codec<>() {
+
+				@SuppressWarnings("unchecked")
+				@Override
+				public <T> DataResult<Pair<S, T>> decode(DynamicOps<T> ops, T input) {
+					return self.setRoot(dataType.isRoot()).codec().parse(ops, input)
+						.flatMap(list -> (DataResult<S>) to.apply(list))
+						.map(s -> Pair.of(s, input));
+				}
+
+				@Override
+				public <T> DataResult<T> encode(S input, DynamicOps<T> ops, T prefix) {
+					return self.setRoot(dataType.isRoot()).codec().encode(from.apply(input), ops, prefix);
+				}
+
+			},
+			packetCodec().xmap(list -> to.apply(list).getOrThrow(), from),
+			dataType.getName(),
+			dataType.isRoot()
+		));
+	}
+
+	@Override
+	public <S> SerializableDataType<S> flatComapMap(Function<? super List<E>, ? extends S> to, Function<? super S, ? extends DataResult<? extends List<E>>> from) {
+		SerializableDataTypeList<E> self = this;
+		return recursive(dataType -> new SerializableDataType<>(
+			new Codec<>() {
+
+				@Override
+				public <T> DataResult<Pair<S, T>> decode(DynamicOps<T> ops, T input) {
+					return self.setRoot(dataType.isRoot()).codec().decode(ops, input)
+						.map(listAndInput -> listAndInput
+							.mapFirst(to));
+				}
+
+				@Override
+				public <T> DataResult<T> encode(S input, DynamicOps<T> ops, T prefix) {
+					return from.apply(input)
+						.flatMap(list -> self.setRoot(dataType.isRoot()).codec().encode(list, ops, prefix));
+				}
+
+			},
+			packetCodec().xmap(to, s -> from.apply(s).getOrThrow()),
+			dataType.getName(),
+			dataType.isRoot()
+		));
+	}
+
+	@Override
+	public <S> SerializableDataType<S> flatXmap(Function<? super List<E>, ? extends DataResult<? extends S>> to, Function<? super S, ? extends DataResult<? extends List<E>>> from) {
+		SerializableDataTypeList<E> self = this;
+		return recursive(dataType -> new SerializableDataType<>(
+			new Codec<>() {
+
+				@SuppressWarnings("unchecked")
+				@Override
+				public <T> DataResult<Pair<S, T>> decode(DynamicOps<T> ops, T input) {
+					return self.setRoot(dataType.isRoot()).codec().parse(ops, input)
+						.flatMap(list -> (DataResult<S>) to.apply(list))
+						.map(s -> Pair.of(s, input));
+				}
+
+				@Override
+				public <T> DataResult<T> encode(S input, DynamicOps<T> ops, T prefix) {
+					return from.apply(input)
+						.flatMap(list -> self.setRoot(dataType.isRoot()).codec().encode(list, ops, prefix));
+				}
+
+			},
+			packetCodec().xmap(list -> to.apply(list).getOrThrow(), s -> from.apply(s).getOrThrow()),
+			dataType.getName(),
+			dataType.isRoot()
+		));
 	}
 
 	@Override

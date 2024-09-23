@@ -2,6 +2,7 @@ package io.github.apace100.calio.data;
 
 import com.google.common.base.Suppliers;
 import com.mojang.serialization.Codec;
+import com.mojang.serialization.DataResult;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
@@ -32,6 +33,26 @@ public class RecursiveSerializableDataType<T> extends SerializableDataType<T> {
     @Override
     public PacketCodec<RegistryByteBuf, T> packetCodec() {
         return dataType.get().packetCodec();
+    }
+
+    @Override
+    public <S> RecursiveSerializableDataType<S> xmap(Function<? super T, ? extends S> to, Function<? super S, ? extends T> from) {
+        return new RecursiveSerializableDataType<>(dt -> wrapper.apply(this).xmap(to, from), this.getName(), this.isRoot());
+    }
+
+    @Override
+    public <S> RecursiveSerializableDataType<S> comapFlatMap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends T> from) {
+        return new RecursiveSerializableDataType<>(dt -> wrapper.apply(this).comapFlatMap(to, from), this.getName(), this.isRoot());
+    }
+
+    @Override
+    public <S> RecursiveSerializableDataType<S> flatComapMap(Function<? super T, ? extends S> to, Function<? super S, ? extends DataResult<? extends T>> from) {
+        return new RecursiveSerializableDataType<>(dt -> wrapper.apply(this).flatComapMap(to, from), this.getName(), this.isRoot());
+    }
+
+    @Override
+    public <S> RecursiveSerializableDataType<S> flatXmap(Function<? super T, ? extends DataResult<? extends S>> to, Function<? super S, ? extends DataResult<? extends T>> from) {
+        return new RecursiveSerializableDataType<>(dt -> wrapper.apply(this).flatXmap(to, from), this.getName(), this.isRoot());
     }
 
     @Override

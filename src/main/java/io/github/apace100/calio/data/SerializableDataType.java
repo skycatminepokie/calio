@@ -286,8 +286,8 @@ public class SerializableDataType<T> {
     @Deprecated
     public static <T> SerializableDataType<T> registry(Class<T> dataClass, Registry<T> registry, String defaultNamespace, boolean showPossibleValues) {
         return registry(dataClass, registry, defaultNamespace, null, (reg, id) -> {
-            String possibleValues = showPossibleValues ? " Expected value to be any of " + String.join(", ", reg.getIds().stream().map(Identifier::toString).toList()) : "";
-            return new RuntimeException("Type \"%s\" is not registered in registry \"%s\".%s".formatted(id, registry.getKey().getValue(), possibleValues));
+            String possibleValues = showPossibleValues ? ". Expected value to be any of " + String.join(", ", reg.getIds().stream().map(Identifier::toString).toList()) : "";
+            return new RuntimeException("Type \"%s\" is not registered in registry \"%s\"%s".formatted(id, registry.getKey().getValue(), possibleValues));
         });
     }
 
@@ -621,7 +621,7 @@ public class SerializableDataType<T> {
                             else {
                                 return RegistryOpsUtil.getEntryLookup(ops, registryRef)
                                     .map(DataResult::success)
-                                    .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\";" + (ops instanceof RegistryOps<I> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")))
+                                    .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\"; " + (ops instanceof RegistryOps<I> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")))
                                     .flatMap(entryLookup -> entryLookup.getOptional(tag)
                                         .map(registryEntries -> tagAndInput)
                                         .map(DataResult::success)
