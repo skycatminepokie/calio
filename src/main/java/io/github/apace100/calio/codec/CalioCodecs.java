@@ -7,12 +7,9 @@ import com.mojang.serialization.DynamicOps;
 import com.mojang.serialization.codecs.PrimitiveCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import io.github.apace100.calio.data.SerializableDataTypes;
-import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
 import io.github.apace100.calio.mixin.TagEntryAccessor;
 import io.github.apace100.calio.util.DynamicIdentifier;
-import net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredient;
-import net.fabricmc.fabric.impl.recipe.ingredient.CustomIngredientImpl;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.recipe.Ingredient;
@@ -22,7 +19,6 @@ import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.util.dynamic.Codecs;
 
-import java.util.List;
 import java.util.function.Function;
 
 public class CalioCodecs {
@@ -96,59 +92,6 @@ public class CalioCodecs {
             ? Either.left(((TagEntryAccessor) tagEntry).callGetIdForCodec())
             : Either.right(tagEntry)
     );
-
-    public static Codec<Ingredient> ingredient(boolean allowEmpty) {
-
-        Codec<Ingredient.Entry[]> entryCodec = INGREDIENT_ENTRY.listOf().comapFlatMap(
-            entries -> !allowEmpty && entries.isEmpty()
-                ? DataResult.error(() -> "Item array cannot be empty, at least one item must be defined")
-                : DataResult.success(entries.toArray(Ingredient.Entry[]::new)),
-            List::of
-        );
-
-        Codec<Ingredient> vanillaIngredientCodec = Codec.either(entryCodec, INGREDIENT_ENTRY).flatComapMap(
-            either ->
-                either.map(Ingredient::new, entry -> new Ingredient(new Ingredient.Entry[] {entry})),
-            ingredient -> {
-
-                IngredientAccessor ingredientAccessor = (IngredientAccessor) ingredient;
-                Ingredient.Entry[] entries = ingredientAccessor.getEntries();
-
-                if (entries.length == 1) {
-                    return DataResult.success(Either.right(entries[0]));
-                }
-
-                else if (!allowEmpty && entries.length == 0) {
-                    return DataResult.error(() -> "Item array cannot be empty, at least one item must be defined");
-                }
-
-                else {
-                    return DataResult.success(Either.left(entries));
-                }
-
-            }
-        );
-
-        Codec<CustomIngredient> customIngredientCodec = CustomIngredientImpl.CODEC.dispatch(
-            CustomIngredientImpl.TYPE_KEY,
-            CustomIngredient::getSerializer,
-            serializer -> serializer.getCodec(allowEmpty)
-        );
-
-        return Codec.either(customIngredientCodec, vanillaIngredientCodec).xmap(
-            either -> either.map(
-                CustomIngredient::toVanilla,
-                Function.identity()
-            ),
-            ingredient -> {
-                CustomIngredient customIngredient = ingredient.getCustomIngredient();
-                return customIngredient == null
-                    ? Either.right(ingredient)
-                    : Either.left(customIngredient);
-            }
-        );
-
-    }
 
     public static void init() {
 

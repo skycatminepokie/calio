@@ -3,14 +3,14 @@ package io.github.apace100.calio.data;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
 import com.mojang.serialization.*;
-import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.util.Validatable;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import net.minecraft.entity.attribute.EntityAttributeModifier;
 import net.minecraft.network.RegistryByteBuf;
+import net.minecraft.registry.RegistryOps;
 import net.minecraft.util.Identifier;
 import org.jetbrains.annotations.NotNull;
 
@@ -258,34 +258,23 @@ public class SerializableData extends MapCodec<SerializableData.Instance> {
     }
 
     /**
-     *  Use {@link #fromJson(JsonObject)} instead.
+     *  <p><b>Use {@link #decode(DynamicOps, MapLike)} (or {@link #decoder()}) instead.</b></p>
+     *  <p>Some, if not most, data types may also require a {@link RegistryOps}, which can be retrieved from a {@link net.minecraft.registry.DynamicRegistryManager} or a {@link net.minecraft.registry.RegistryWrapper.WrapperLookup}.</p>
      */
     @Deprecated(forRemoval = true)
     public Instance read(JsonObject jsonObject) {
-        return this.fromJson(jsonObject);
-    }
-
-    public Instance fromJson(JsonObject jsonObject) {
-        DynamicOps<JsonElement> ops = Calio.wrapRegistryOps(JsonOps.INSTANCE);
-        return ops.getMap(jsonObject)
-            .flatMap(mapLike -> decode(ops, mapLike))
-            .getOrThrow();
+        return this.decoder().parse(JsonOps.INSTANCE, jsonObject).getOrThrow(JsonParseException::new);
     }
 
     /**
-     *  Use {@link #toJson(Instance)} instead.
+     *  <p><b>Use {@link #encode(Instance, DynamicOps, RecordBuilder)} (or {@link #encoder()}) instead.</b></p>
+     *  <p>Some, if not most, data types may also require a {@link RegistryOps}, which can be retrieved from a {@link net.minecraft.registry.DynamicRegistryManager} or a {@link net.minecraft.registry.RegistryWrapper.WrapperLookup}.</p>
      */
     @Deprecated(forRemoval = true)
     public JsonObject write(Instance data) {
-        return this.toJson(data);
-    }
-
-    public JsonObject toJson(Instance data) {
         return encoder().encodeStart(JsonOps.INSTANCE, data)
-            .flatMap(jsonElement -> jsonElement instanceof JsonObject jsonObject
-                ? DataResult.success(jsonObject)
-                : DataResult.error(() -> "Not a JSON object: " + jsonElement))
-            .getOrThrow();
+            .flatMap(jsonElement -> jsonElement instanceof JsonObject jsonObject ? DataResult.success(jsonObject) : DataResult.error(() -> "Not a JSON object: " + jsonElement))
+            .getOrThrow(JsonParseException::new);
     }
 
     public <T> SerializableData add(String name, @NotNull Codec<T> codec) {

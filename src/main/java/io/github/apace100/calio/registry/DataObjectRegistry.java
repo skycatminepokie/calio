@@ -190,7 +190,7 @@ public class DataObjectRegistry<T extends DataObject<T>> {
             factory = defaultFactory;
         }
 
-        SerializableData.Instance data = factory.getData().fromJson(jsonObject);
+        SerializableData.Instance data = factory.getData().decoder().parse(JsonOps.INSTANCE, jsonObject).getOrThrow(JsonParseException::new);
         return factory.fromData(data);
 
     }

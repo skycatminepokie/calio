@@ -8,7 +8,7 @@ import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
 import com.mojang.serialization.codecs.UnboundedMapCodec;
-import io.github.apace100.calio.Calio;
+import io.github.apace100.calio.CalioServer;
 import io.github.apace100.calio.codec.*;
 import io.github.apace100.calio.mixin.WeightedListAccessor;
 import io.github.apace100.calio.util.*;
@@ -347,11 +347,7 @@ public class SerializableDataType<T> {
 
                 @Override
                 public <I> DataResult<I> encode(T input, DynamicOps<I> ops, I prefix) {
-                    return Optional.ofNullable(registry.getId(input))
-                        .map(Identifier::toString)
-                        .map(ops::createString)
-                        .map(DataResult::success)
-                        .orElse(DataResult.error(() -> input + " is not registered in registry \"" + registry.getKey().getValue() + "\"!"));
+                    return registry.getCodec().encode(input, ops, prefix);
                 }
 
             },
@@ -618,15 +614,18 @@ public class SerializableDataType<T> {
                             Pair<TagKey<T>, I> tagAndInput = idAndInput.mapFirst(id -> TagKey.of(registryRef, id));
                             TagKey<T> tag = tagAndInput.getFirst();
 
-                            if (Calio.getRegistryTags().map(tags -> tags.containsKey(tag)).orElse(false)) {
+                            if (CalioServer.getRegistryTags().containsKey(tag)) {
                                 return DataResult.success(tagAndInput);
                             }
 
                             else {
-                                return Calio.getOptionalEntries(ops, tag)
-                                    .map(entries -> tagAndInput)
+                                return RegistryOpsUtil.getEntryLookup(ops, registryRef)
                                     .map(DataResult::success)
-                                    .orElse(DataResult.error(() -> "Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!"));
+                                    .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\";" + (ops instanceof RegistryOps<I> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")))
+                                    .flatMap(entryLookup -> entryLookup.getOptional(tag)
+                                        .map(registryEntries -> tagAndInput)
+                                        .map(DataResult::success)
+                                        .orElse(DataResult.error(() -> "Tag \"" + tag.id() + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!")));
                             }
 
                         });
@@ -683,7 +682,7 @@ public class SerializableDataType<T> {
     }
 
     public static <T> SerializableDataType<RegistryKey<T>> registryKey(RegistryKey<? extends Registry<T>> registryRef, Collection<RegistryKey<T>> exemptions) {
-        return lazy(() -> new SerializableDataType<>(
+        return new SerializableDataType<>(
             new Codec<>() {
 
                 @Override
@@ -699,10 +698,13 @@ public class SerializableDataType<T> {
                             }
 
                             else {
-                                return Calio.getOptionalEntry(ops, key)
-                                    .map(ref -> keyAndInput)
+                                return RegistryOpsUtil.getEntryLookup(ops, registryRef)
                                     .map(DataResult::success)
-                                    .orElse(DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!"));
+                                    .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\"; " + (ops instanceof RegistryOps<I> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")))
+                                    .flatMap(entryLookup -> entryLookup.getOptional(key)
+                                        .map(ref -> keyAndInput)
+                                        .map(DataResult::success)
+                                        .orElse(DataResult.error(() -> "Type \"" + key.getValue() + "\" is not registered in registry \"" + registryRef.getValue() + "\"!")));
                             }
 
                         });
@@ -718,7 +720,7 @@ public class SerializableDataType<T> {
                 PacketByteBuf::writeRegistryKey,
                 buf -> buf.readRegistryKey(registryRef)
             )
-        ));
+        );
     }
 
     public static <E extends Enum<E>> SerializableDataType<E> enumValue(Class<E> enumClass) {
@@ -921,12 +923,13 @@ public class SerializableDataType<T> {
 
                 @Override
                 public <T> DataResult<Pair<TagLike<E>, T>> decode(DynamicOps<T> ops, T input) {
-                    return Calio.getRegistryEntryLookup(ops, registryRef)
-                        .map(entryLookup -> TAG_ENTRY_SET.get().codec().decode(ops, input)
+                    return RegistryOpsUtil.getEntryLookup(ops, registryRef)
+                        .map(DataResult::success)
+                        .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\"; " + (ops instanceof RegistryOps<T> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")))
+                        .flatMap(entryLookup -> TAG_ENTRY_SET.get().codec().decode(ops, input)
                             .map(entriesAndInput -> entriesAndInput
                                 .mapFirst(entries -> new TagLike.Builder<>(registryRef, entries))
-                                .mapFirst(builder -> builder.build(entryLookup))))
-                        .orElse(DataResult.error(() -> "Couldn't find registry \"" + registryRef.getValue() + "\"; " + (ops instanceof RegistryOps<T> ? "it doesn't exist!" : "the passed dynamic ops is not a registry ops!")));
+                                .mapFirst(builder -> builder.build(entryLookup))));
                 }
 
                 @Override

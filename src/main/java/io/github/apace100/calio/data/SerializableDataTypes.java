@@ -4,7 +4,6 @@ import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableMap;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
-import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.codec.CalioCodecs;
 import io.github.apace100.calio.codec.CalioPacketCodecs;
 import io.github.apace100.calio.mixin.IngredientAccessor;
@@ -556,58 +555,68 @@ public final class SerializableDataTypes {
             }
 
             else if (paramsNbt.isEmpty()) {
-                throw new IllegalArgumentException("Expected parameters for particle effect \"" + particleTypeId + "\"");
+                throw new IllegalArgumentException("Particle effect \"" + particleTypeId + "\" requires parameters!");
             }
 
             else {
 
-                paramsNbt.putString("type", particleTypeId.toString());
-                RegistryOps<NbtElement> nbtOps = Calio.getWrapperLookup(ops)
-                    .map(lookup -> lookup.getOps(NbtOps.INSTANCE))
-                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effect without access to registries!"));
+                RegistryOps<NbtElement> nbtOps = RegistryOpsUtil.getWrapperLookup(ops)
+                    .map(wrapperLookup -> wrapperLookup.getOps(NbtOps.INSTANCE))
+                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effects without registry ops!"));
 
+				paramsNbt.putString("type", particleTypeId.toString());
                 return ParticleTypes.TYPE_CODEC
                     .parse(nbtOps, paramsNbt)
-                    .getOrThrow();
+                    .getOrThrow(NbtException::new);
 
             }
 
         },
-        (particleEffect, ops, serializableData) -> serializableData.instance()
-            .set("type", particleEffect.getType())
-            .set("params", ParticleTypes.TYPE_CODEC
-                .encodeStart(Calio.wrapRegistryOps(ops, NbtOps.INSTANCE), particleEffect)
-                .getOrThrow())
+		(particleEffect, ops, serializableData) -> {
+
+			RegistryOps<NbtElement> nbtOps = RegistryOpsUtil.getWrapperLookup(ops)
+				.map(wrapperLookup -> wrapperLookup.getOps(NbtOps.INSTANCE))
+				.orElseThrow(() -> new IllegalStateException("Couldn't encode particle effects without registry ops!"));
+			NbtCompound paramsNbt = ParticleTypes.TYPE_CODEC.encodeStart(nbtOps, particleEffect)
+				.flatMap(nbtElement -> nbtElement instanceof NbtCompound nbtCompound ? DataResult.success(nbtCompound) : DataResult.error(() -> "Not a compound tag: " + nbtElement))
+				.ifSuccess(nbtCompound -> nbtCompound.remove("type"))
+				.getOrThrow(NbtException::new);
+
+			return serializableData.instance()
+				.set("type", particleEffect.getType())
+				.set("params", paramsNbt);
+
+		}
     );
 
-    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = SerializableDataType.of(
-        new Codec<>() {
+    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = SerializableDataType.recursive(dataType -> SerializableDataType.of(
+		new Codec<>() {
 
-            @Override
-            public <T> DataResult<Pair<ParticleEffect, T>> decode(DynamicOps<T> ops, T input) {
+			@Override
+			public <T> DataResult<Pair<ParticleEffect, T>> decode(DynamicOps<T> ops, T input) {
 
-                if (ops.getStringValue(input).isSuccess()) {
-                    return PARTICLE_TYPE.codec().parse(ops, input)
-                        .flatMap(type -> type instanceof SimpleParticleType simpleType
-                            ? DataResult.success(simpleType)
-                            : DataResult.error(() -> "Particle effect \"" + Registries.PARTICLE_TYPE.getId(type) + "\" requires parameters!"))
-                        .map(type -> Pair.of(type, input));
-                }
+				if (ops.getStringValue(input).isSuccess()) {
+					return PARTICLE_TYPE.codec().parse(ops, input)
+						.flatMap(type -> type instanceof SimpleParticleType simpleType
+							? DataResult.success(simpleType)
+							: DataResult.error(() -> "Particle effect \"" + Registries.PARTICLE_TYPE.getId(type) + "\" requires parameters!"))
+						.map(type -> Pair.of(type, input));
+				}
 
-                else {
-                    return PARTICLE_EFFECT.codec().decode(ops, input);
-                }
+				else {
+					return PARTICLE_EFFECT.setRoot(dataType.isRoot()).codec().decode(ops, input);
+				}
 
-            }
+			}
 
-            @Override
-            public <T> DataResult<T> encode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
-                return PARTICLE_EFFECT.codec().encode(input, ops, prefix);
-            }
+			@Override
+			public <T> DataResult<T> encode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
+				return PARTICLE_EFFECT.setRoot(dataType.isRoot()).codec().encode(input, ops, prefix);
+			}
 
-        },
-        PARTICLE_EFFECT.packetCodec()
-    );
+		},
+		PARTICLE_EFFECT.packetCodec()
+	));
 
     public static final SerializableDataType<ComponentChanges> COMPONENT_CHANGES = SerializableDataType.of(ComponentChanges.CODEC, ComponentChanges.PACKET_CODEC);
 
