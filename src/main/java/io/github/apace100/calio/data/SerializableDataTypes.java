@@ -810,7 +810,69 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<TagKey<Biome>> BIOME_TAG = SerializableDataType.tagKey(RegistryKeys.BIOME);
 
-    public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.of(CalioCodecs.TAG_ENTRY, CalioPacketCodecs.TAG_ENTRY.cast());
+	public static final SerializableDataType<Codecs.TagEntryId> TAG_ENTRY_ID = STRING.comapFlatMap(
+		str -> str.startsWith("#")
+			? DynamicIdentifier.ofResult(str.substring(1)).map(id -> new Codecs.TagEntryId(id, true))
+			: DynamicIdentifier.ofResult(str).map(id -> new Codecs.TagEntryId(id, false)),
+		Codecs.TagEntryId::toString
+	);
+
+	public static final CompoundSerializableDataType<TagEntry> OBJECT_TAG_ENTRY = SerializableDataType.compound(
+		new SerializableData()
+			.add("id", TAG_ENTRY_ID)
+			.add("required", BOOLEAN, true),
+		data -> new TagEntry(
+			data.get("id"),
+			data.get("required")
+		),
+		(tagEntry, serializableData) -> serializableData.instance()
+			.set("id", ((TagEntryAccessor) tagEntry).callGetIdForCodec())
+			.set("required", ((TagEntryAccessor) tagEntry).isRequired())
+	);
+
+    public static final SerializableDataType<TagEntry> TAG_ENTRY = SerializableDataType.recursive(dataType -> SerializableDataType.of(
+		new Codec<>() {
+
+			@Override
+			public <T> DataResult<Pair<TagEntry, T>> decode(DynamicOps<T> ops, T input) {
+
+				DataResult<Pair<TagEntry, T>> entryIdResult = TAG_ENTRY_ID.codec().decode(ops, input)
+					.map(entryIdAndInput -> entryIdAndInput
+						.mapFirst(entryId -> new TagEntry(entryId, true)));
+				if (entryIdResult.isSuccess()) {
+					return entryIdResult;
+				}
+
+				DataResult<Pair<TagEntry, T>> entryResult = OBJECT_TAG_ENTRY.setRoot(dataType.isRoot()).codec().decode(ops, input);
+				if (entryResult.isSuccess()) {
+					return OBJECT_TAG_ENTRY.codec().decode(ops, input);
+				}
+
+				StringBuilder errorBuilder = new StringBuilder("Couldn't decode tag entry");
+
+				entryIdResult.ifError(error -> errorBuilder.append(" as an ID (").append(error.message()).append(")"));
+				entryResult.ifError(error -> errorBuilder.append(" or as an object (").append(error.message()).append(")"));
+
+				return DataResult.error(errorBuilder::toString);
+
+			}
+
+			@Override
+			public <T> DataResult<T> encode(TagEntry input, DynamicOps<T> ops, T prefix) {
+
+				if (((TagEntryAccessor) input).isRequired()) {
+					return TAG_ENTRY_ID.codec().encode(((TagEntryAccessor) input).callGetIdForCodec(), ops, prefix);
+				}
+
+				else {
+					return OBJECT_TAG_ENTRY.setRoot(dataType.isRoot()).codec().encode(input, ops, prefix);
+				}
+
+			}
+
+		},
+		CalioPacketCodecs.TAG_ENTRY.cast()
+	));
 
     public static final SerializableDataType<List<TagEntry>> TAG_ENTRIES = TAG_ENTRY.list();
 

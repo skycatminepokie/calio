@@ -123,7 +123,7 @@ public class TagLike<T> {
                 TagEntryAccessor tagEntryAccess = (TagEntryAccessor) tagEntry;
 
                 Identifier id = tagEntryAccess.getId();
-                String path = "[" + tagEntries.size() + "]";
+                int index = tagEntries.size();
 
                 boolean isTag = tagEntryAccess.isTag();
                 boolean required = tagEntryAccess.isRequired();
@@ -134,7 +134,7 @@ public class TagLike<T> {
                     Optional<RegistryEntryList.Named<E>> entries = entryLookup.getOptional(tag);
 
                     if (required && entries.isEmpty()) {
-                        throw new DataException(DataException.Phase.READING, path, "Tag \"" + id + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
+                        throw new DataException(DataException.Phase.READING, index, "Tag \"" + id + "\" for registry \"" + registryRef.getValue() + "\" doesn't exist!");
                     }
 
                     else if (entries.isPresent()) {
@@ -154,7 +154,7 @@ public class TagLike<T> {
                     Optional<RegistryEntry.Reference<E>> entry = entryLookup.getOptional(key);
 
                     if (required && entry.isEmpty()) {
-                        throw new DataException(DataException.Phase.READING, path, "Type \"" + id + "\" is not registered in registry \"" + key.getRegistry() + "\"!");
+                        throw new DataException(DataException.Phase.READING, index, "Type \"" + id + "\" is not registered in registry \"" + registryRef.getValue() + "\"!");
                     }
 
                     else {
