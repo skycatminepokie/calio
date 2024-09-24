@@ -24,13 +24,13 @@ import org.jetbrains.annotations.Nullable;
 import java.util.*;
 import java.util.function.*;
 
+//  TODO: Generalize this to use codecs/packet codecs -eggohito
 public class DataObjectRegistry<T extends DataObject<T>> {
 
     private static final HashMap<Identifier, DataObjectRegistry<?>> REGISTRIES = new HashMap<>();
     private static final Set<Identifier> AUTO_SYNC_SET = new HashSet<>();
 
     private final Identifier registryId;
-    private final Class<T> objectClass;
 
     private final Map<Identifier, T> idToEntry = new HashMap<>();
     private final Map<T, Identifier> entryToId = new HashMap<>();
@@ -51,16 +51,15 @@ public class DataObjectRegistry<T extends DataObject<T>> {
 
     private Loader loader;
 
-    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor) {
+    private DataObjectRegistry(Identifier registryId, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor) {
         this.registryId = registryId;
-        this.objectClass = objectClass;
         this.factoryFieldName = factoryFieldName;
         this.defaultFactory = defaultFactory;
         this.jsonPreProcessor = jsonPreProcessor;
     }
 
-    private DataObjectRegistry(Identifier registryId, Class<T> objectClass, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor, String dataFolder, boolean useLoadingPriority, ImmutableSet.Builder<Identifier> dependencies, @Nullable BiConsumer<Identifier, Exception> legacyErrorHandler, @Nullable TriConsumer<Identifier, String, Exception> errorHandler, @Nullable ResourceType resourceType) {
-        this(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor);
+    private DataObjectRegistry(Identifier registryId, String factoryFieldName, DataObjectFactory<T> defaultFactory, @NotNull UnaryOperator<JsonElement> jsonPreProcessor, String dataFolder, boolean useLoadingPriority, ImmutableSet.Builder<Identifier> dependencies, @Nullable BiConsumer<Identifier, Exception> legacyErrorHandler, @Nullable TriConsumer<Identifier, String, Exception> errorHandler, @Nullable ResourceType resourceType) {
+        this(registryId, factoryFieldName, defaultFactory, jsonPreProcessor);
         this.loader = new Loader(dataFolder, useLoadingPriority, dependencies, legacyErrorHandler, errorHandler, resourceType);
     }
 
@@ -104,54 +103,63 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     }
 
     public void send(RegistryByteBuf buf) {
-        buf.writeInt(idToEntry.size() - staticEntries.size());
-        for(Map.Entry<Identifier, T> entry : idToEntry.entrySet()) {
-            if(staticEntries.containsKey(entry.getKey())) {
-                // Static entries are added from code by mods,
-                // so they will not be synced to clients (as
-                // clients are assumed to have the same mods).
-                continue;
+
+        int totalCount = Math.abs(idToEntry.size() - staticEntries.size());
+        buf.writeInt(totalCount);
+
+        idToEntry.forEach((id, entry) -> {
+
+            //  Static entries are added via code by mods, so they don't have to be synced to clients (as clients
+            //  are expected to have the same mods)
+            if (!staticEntries.containsKey(id)) {
+                buf.writeIdentifier(id);
+                sendDataObject(buf, entry);
             }
-            buf.writeIdentifier(entry.getKey());
-            sendDataObject(buf, entry.getValue());
-        }
+
+        });
+
     }
 
     public void sendDataObject(RegistryByteBuf buf, T t) {
+
         DataObjectFactory<T> factory = t.getFactory();
         buf.writeIdentifier(factoryToId.get(factory));
-        SerializableData.Instance data = factory.toData(t);
-        factory.getData().send(buf, data);
+
+        SerializableData.Instance factoryData = factory.toData(t);
+        factory.getSerializableData().send(buf, factoryData);
+
     }
 
     public DataObjectRegistry<T> receive(RegistryByteBuf buf) {
-        receive(buf, Runnable::run);
-        return this;
-    }
 
-    public void receive(RegistryByteBuf buf, Consumer<Runnable> scheduler) {
-        int entryCount = buf.readInt();
-        HashMap<Identifier, T> entries = new HashMap<>(entryCount);
-        for(int i = 0; i < entryCount; i++) {
+        clear();
+        int entryCount = buf.readVarInt();
+
+        for (int i = 0; i < entryCount; i++) {
+
             Identifier entryId = buf.readIdentifier();
             T entry = receiveDataObject(buf);
-            entries.put(entryId, entry);
+
+            register(entryId, entry);
+
         }
-        scheduler.accept(() -> {
-            clear();
-            entries.forEach(this::register);
-        });
+
+        return this;
+
     }
 
     public T receiveDataObject(RegistryByteBuf buf) {
+
         Identifier factoryId = buf.readIdentifier();
         DataObjectFactory<T> factory = getFactory(factoryId);
-        SerializableData.Instance data = factory.getData().receive(buf);
+
+        SerializableData.Instance data = factory.getSerializableData().receive(buf);
         return factory.fromData(data);
+
     }
 
     public JsonElement writeDataObject(T t) {
-        return t.getFactory().getData().codec()
+        return t.getFactory().getSerializableData().codec()
             .encodeStart(JsonOps.INSTANCE, t.getFactory().toData(t))
             .resultOrPartial(Calio.LOGGER::warn)
             .orElseGet(JsonObject::new);
@@ -190,13 +198,17 @@ public class DataObjectRegistry<T extends DataObject<T>> {
             factory = defaultFactory;
         }
 
-        SerializableData.Instance data = factory.getData().decoder().parse(JsonOps.INSTANCE, jsonObject).getOrThrow(JsonParseException::new);
+        SerializableData.Instance data = factory.getSerializableData().decoder().parse(JsonOps.INSTANCE, jsonObject).getOrThrow(JsonParseException::new);
         return factory.fromData(data);
 
     }
 
     public void sync(ServerPlayerEntity player) {
-        ServerPlayNetworking.send(player, new SyncDataObjectRegistryS2CPacket(this));
+
+        if (player.server.isDedicated()) {
+            ServerPlayNetworking.send(player, new SyncDataObjectRegistryS2CPacket(this));
+        }
+
     }
 
     public void clear() {
@@ -287,10 +299,12 @@ public class DataObjectRegistry<T extends DataObject<T>> {
     }
 
     public static void performAutoSync(ServerPlayerEntity player) {
-        for(Identifier registryId : AUTO_SYNC_SET) {
+
+        for (Identifier registryId : AUTO_SYNC_SET) {
             DataObjectRegistry<?> registry = getRegistry(registryId);
             registry.sync(player);
         }
+
     }
 
     private class Loader extends IdentifiableMultiJsonDataLoader implements IdentifiableResourceReloadListener {
@@ -383,10 +397,9 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         private final ImmutableSet.Builder<Identifier> dependencies = new ImmutableSet.Builder<>();
 
         private final Identifier registryId;
-        private final Class<T> objectClass;
 
         private DataObjectFactory<T> defaultFactory;
-        private UnaryOperator<JsonElement> jsonPreProcessor = jsonElement -> jsonElement;
+        private UnaryOperator<JsonElement> jsonPreProcessor = UnaryOperator.identity();
 
         @Nullable
         private BiConsumer<Identifier, Exception> legacyErrorHandler;
@@ -403,13 +416,20 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         private boolean readFromData;
         private boolean useLoadingPriority;
 
+        /**
+         *  <b>Use {@link #Builder(Identifier)} instead.</b>
+         */
+        @Deprecated(forRemoval = true)
         public Builder(Identifier registryId, Class<T> objectClass) {
+            this(registryId);
+        }
+
+        public Builder(Identifier registryId) {
 
             this.registryId = registryId;
-            this.objectClass = objectClass;
 
             if (REGISTRIES.containsKey(registryId)) {
-                throw new IllegalArgumentException("A data object registry with id \"" + registryId + "\" already exists.");
+                throw new IllegalArgumentException("A data object registry with ID \"" + registryId + "\" already exists!");
             }
 
         }
@@ -473,8 +493,8 @@ public class DataObjectRegistry<T extends DataObject<T>> {
         public DataObjectRegistry<T> buildAndRegister() {
 
             DataObjectRegistry<T> registry = readFromData
-                ? new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor, dataFolder, useLoadingPriority, dependencies, legacyErrorHandler, errorHandler, resourceType)
-                : new DataObjectRegistry<>(registryId, objectClass, factoryFieldName, defaultFactory, jsonPreProcessor);
+                ? new DataObjectRegistry<>(registryId, factoryFieldName, defaultFactory, jsonPreProcessor, dataFolder, useLoadingPriority, dependencies, legacyErrorHandler, errorHandler, resourceType)
+                : new DataObjectRegistry<>(registryId, factoryFieldName, defaultFactory, jsonPreProcessor);
 
             REGISTRIES.put(registryId, registry);
             if (autoSync) {

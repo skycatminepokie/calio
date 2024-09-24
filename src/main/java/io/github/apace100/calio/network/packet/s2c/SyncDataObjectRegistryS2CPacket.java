@@ -2,7 +2,6 @@ package io.github.apace100.calio.network.packet.s2c;
 
 import io.github.apace100.calio.Calio;
 import io.github.apace100.calio.registry.DataObjectRegistry;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
@@ -18,8 +17,7 @@ public record SyncDataObjectRegistryS2CPacket(DataObjectRegistry<?> registry) im
         Identifier registryId = buf.readIdentifier();
         DataObjectRegistry<?> registry = DataObjectRegistry.getRegistry(registryId);
 
-        registry.receive(buf);
-        return new SyncDataObjectRegistryS2CPacket(registry);
+        return new SyncDataObjectRegistryS2CPacket(registry.receive(buf));
 
     }
 
