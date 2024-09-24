@@ -1,16 +1,11 @@
 package io.github.apace100.calio.codec;
 
-import com.google.gson.internal.LazilyParsedNumber;
 import io.github.apace100.calio.data.DataException;
 import io.github.apace100.calio.mixin.TagEntryAccessor;
 import io.github.apace100.calio.util.DynamicIdentifier;
 import io.netty.buffer.ByteBuf;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.recipe.Recipe;
-import net.minecraft.recipe.RecipeEntry;
 import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.dynamic.Codecs;
@@ -22,60 +17,6 @@ import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
 public class CalioPacketCodecs {
-
-    public static final PacketCodec<PacketByteBuf, Number> NUMBER = PacketCodec.of(
-        (number, buf) -> {
-            switch (number) {
-                case null ->
-                    buf.writeByte(-1);
-                case Double d -> {
-                    buf.writeByte(0);
-                    buf.writeDouble(d);
-                }
-                case Float f -> {
-                    buf.writeByte(1);
-                    buf.writeFloat(f);
-                }
-                case Integer i -> {
-                    buf.writeByte(2);
-                    buf.writeInt(i);
-                }
-                case Long l -> {
-                    buf.writeByte(3);
-                    buf.writeLong(l);
-                }
-                default -> {
-                    buf.writeByte(4);
-                    buf.writeString(number.toString());
-                }
-            }
-        },
-        buf -> {
-
-            byte type = buf.readByte();
-            return switch (type) {
-                case 0 ->
-                    buf.readDouble();
-                case 1 ->
-                    buf.readFloat();
-                case 2 ->
-                    buf.readInt();
-                case 3 ->
-                    buf.readLong();
-                case 4 ->
-                    new LazilyParsedNumber(buf.readString());
-                default ->
-                    throw new IllegalStateException("Unexpected type ID \"" + type + "\" (allowed range: [0-4]");
-            };
-
-        }
-    );
-
-    public static final PacketCodec<RegistryByteBuf, RecipeEntry<?>> RECIPE_ENTRY = PacketCodec.tuple(
-        Identifier.PACKET_CODEC, RecipeEntry::id,
-        Recipe.PACKET_CODEC, RecipeEntry::value,
-        RecipeEntry::new
-    );
 
     public static final PacketCodec<ByteBuf, Codecs.TagEntryId> TAG_ENTRY_ID = PacketCodecs.STRING.xmap(
         str -> {

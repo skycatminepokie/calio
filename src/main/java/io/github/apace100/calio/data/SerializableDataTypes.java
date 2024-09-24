@@ -2,13 +2,18 @@ package io.github.apace100.calio.data;
 
 import com.google.common.collect.ImmutableBiMap;
 import com.google.common.collect.ImmutableMap;
+import com.google.gson.internal.LazilyParsedNumber;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
-import io.github.apace100.calio.codec.CalioCodecs;
+import com.mojang.serialization.codecs.PrimitiveCodec;
+import com.mojang.serialization.codecs.RecordCodecBuilder;
+import io.github.apace100.calio.codec.CalioMapCodecs;
 import io.github.apace100.calio.codec.CalioPacketCodecs;
 import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
 import io.github.apace100.calio.mixin.TagEntryAccessor;
+import io.github.apace100.calio.registry.DataObjectFactory;
+import io.github.apace100.calio.registry.SimpleDataObjectFactory;
 import io.github.apace100.calio.util.*;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.fabricmc.fabric.api.recipe.v1.ingredient.CustomIngredient;
@@ -65,13 +70,14 @@ import net.minecraft.world.event.GameEvent;
 import net.minecraft.world.explosion.Explosion;
 
 import java.util.*;
+import java.util.stream.Stream;
 
 @SuppressWarnings("unused")
 public final class SerializableDataTypes {
 
     public static final SerializableDataType<Integer> INT = SerializableDataType.of(Codec.INT, PacketCodecs.INTEGER.cast());
 
-    public static final SerializableDataType<List<Integer>> INTS = INT.list();
+	public static final SerializableDataType<List<Integer>> INTS = INT.list();
 
     public static final SerializableDataType<Integer> POSITIVE_INT = SerializableDataType.boundNumber(INT, 1, Integer.MAX_VALUE);
 
@@ -111,7 +117,68 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<String>> STRINGS = STRING.list();
 
-    public static final SerializableDataType<Number> NUMBER = SerializableDataType.lazy(() -> SerializableDataType.of(CalioCodecs.NUMBER, CalioPacketCodecs.NUMBER.cast()));
+    public static final SerializableDataType<Number> NUMBER = SerializableDataType.of(
+		new PrimitiveCodec<>() {
+
+			@Override
+			public <T> DataResult<Number> read(DynamicOps<T> ops, T input) {
+				return ops.getNumberValue(input);
+			}
+
+			@Override
+			public <T> T write(DynamicOps<T> ops, Number value) {
+				return ops.createNumeric(value);
+			}
+
+		},
+		PacketCodec.of(
+			(number, buf) -> {
+				switch (number) {
+					case null ->
+						buf.writeByte(-1);
+					case Double d -> {
+						buf.writeByte(0);
+						buf.writeDouble(d);
+					}
+					case Float f -> {
+						buf.writeByte(1);
+						buf.writeFloat(f);
+					}
+					case Integer i -> {
+						buf.writeByte(2);
+						buf.writeInt(i);
+					}
+					case Long l -> {
+						buf.writeByte(3);
+						buf.writeLong(l);
+					}
+					default -> {
+						buf.writeByte(4);
+						buf.writeString(number.toString());
+					}
+				}
+			},
+			buf -> {
+
+				byte type = buf.readByte();
+				return switch (type) {
+					case 0 ->
+						buf.readDouble();
+					case 1 ->
+						buf.readFloat();
+					case 2 ->
+						buf.readInt();
+					case 3 ->
+						buf.readLong();
+					case 4 ->
+						new LazilyParsedNumber(buf.readString());
+					default ->
+						throw new IllegalStateException("Unexpected type ID \"" + type + "\" (allowed range: [0-4]");
+				};
+
+			}
+		)
+	);
 
     public static final SerializableDataType<List<Number>> NUMBERS = NUMBER.list();
 
@@ -156,21 +223,23 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<EntityAttributeModifier.Operation> MODIFIER_OPERATION = SerializableDataType.enumValue(EntityAttributeModifier.Operation.class);
 
-    public static final CompoundSerializableDataType<EntityAttributeModifier> ATTRIBUTE_MODIFIER = SerializableDataType.compound(
-        new SerializableData()
-            .add("id", IDENTIFIER)
-            .add("amount", DOUBLE)
-            .add("operation", MODIFIER_OPERATION),
-        data -> new EntityAttributeModifier(
-            data.getId("id"),
-            data.getDouble("amount"),
-            data.get("operation")
-        ),
-        (entityAttributeModifier, serializableData) -> serializableData.instance()
-            .set("id", entityAttributeModifier.id())
-            .set("amount", entityAttributeModifier.value())
-            .set("operation", entityAttributeModifier.operation())
-    );
+	public static final DataObjectFactory<EntityAttributeModifier> ATTRIBUTE_MODIFIER_OBJ_FACTORY = new SimpleDataObjectFactory<>(
+		new SerializableData()
+			.add("id", IDENTIFIER)
+			.add("amount", DOUBLE)
+			.add("operation", MODIFIER_OPERATION),
+		data -> new EntityAttributeModifier(
+			data.get("id"),
+			data.get("amount"),
+			data.get("operation")
+		),
+		(entityAttributeModifier, serializableData) -> serializableData.instance()
+			.set("id", entityAttributeModifier.id())
+			.set("amount", entityAttributeModifier.value())
+			.set("operation", entityAttributeModifier.operation())
+	);
+
+	public static final CompoundSerializableDataType<EntityAttributeModifier> ATTRIBUTE_MODIFIER = SerializableDataType.compound(ATTRIBUTE_MODIFIER_OBJ_FACTORY);
 
     public static final SerializableDataType<List<EntityAttributeModifier>> ATTRIBUTE_MODIFIERS = ATTRIBUTE_MODIFIER.list();
 
@@ -542,114 +611,145 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<ArgumentWrapper<NbtPathArgumentType.NbtPath>> NBT_PATH = SerializableDataType.argumentType(NbtPathArgumentType.nbtPath());
 
-    public static final CompoundSerializableDataType<ParticleEffect> PARTICLE_EFFECT = SerializableDataType.compound(
-        new SerializableData()
-            .add("type", PARTICLE_TYPE)
-            .addSupplied("params", NBT_COMPOUND, NbtCompound::new),
-        (ops, data) -> {
-
-            ParticleType<? extends ParticleEffect> particleType = data.get("type");
-            NbtCompound paramsNbt = data.get("params");
-
-            Identifier particleTypeId = Objects.requireNonNull(Registries.PARTICLE_TYPE.getId(particleType));
-            if (particleType instanceof SimpleParticleType simpleParticleType) {
-                return simpleParticleType;
-            }
-
-            else if (paramsNbt.isEmpty()) {
-                throw new IllegalArgumentException("Particle effect \"" + particleTypeId + "\" requires parameters!");
-            }
-
-            else {
-
-                RegistryOps<NbtElement> nbtOps = RegistryOpsUtil.getWrapperLookup(ops)
-                    .map(wrapperLookup -> wrapperLookup.getOps(NbtOps.INSTANCE))
-                    .orElseThrow(() -> new IllegalStateException("Couldn't decode particle effects without registry ops!"));
-
-				paramsNbt.putString("type", particleTypeId.toString());
-                return ParticleTypes.TYPE_CODEC
-                    .parse(nbtOps, paramsNbt)
-                    .getOrThrow(NbtException::new);
-
-            }
-
-        },
-		(particleEffect, ops, serializableData) -> {
-
-			RegistryOps<NbtElement> nbtOps = RegistryOpsUtil.getWrapperLookup(ops)
-				.map(wrapperLookup -> wrapperLookup.getOps(NbtOps.INSTANCE))
-				.orElseThrow(() -> new IllegalStateException("Couldn't encode particle effects without registry ops!"));
-			NbtCompound paramsNbt = ParticleTypes.TYPE_CODEC.encodeStart(nbtOps, particleEffect)
-				.flatMap(nbtElement -> nbtElement instanceof NbtCompound nbtCompound ? DataResult.success(nbtCompound) : DataResult.error(() -> "Not a compound tag: " + nbtElement))
-				.ifSuccess(nbtCompound -> nbtCompound.remove("type"))
-				.getOrThrow(NbtException::new);
-
-			return serializableData.instance()
-				.set("type", particleEffect.getType())
-				.set("params", paramsNbt);
-
-		}
-    );
-
-    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = SerializableDataType.recursive(dataType -> SerializableDataType.of(
-		new Codec<>() {
+    public static final CompoundSerializableDataType<ParticleEffect> PARTICLE_EFFECT = new CompoundSerializableDataType<>(
+		new SerializableData()
+			.add("type", PARTICLE_TYPE)
+			.add("params", NBT_COMPOUND, new NbtCompound()),
+		serializableData -> new MapCodec<>() {
 
 			@Override
-			public <T> DataResult<Pair<ParticleEffect, T>> decode(DynamicOps<T> ops, T input) {
+			public <T> DataResult<ParticleEffect> decode(DynamicOps<T> ops, MapLike<T> input) {
+				return serializableData.decode(ops, input).flatMap(data -> {
 
-				if (ops.getStringValue(input).isSuccess()) {
-					return PARTICLE_TYPE.codec().parse(ops, input)
-						.flatMap(type -> type instanceof SimpleParticleType simpleType
-							? DataResult.success(simpleType)
-							: DataResult.error(() -> "Particle effect \"" + Registries.PARTICLE_TYPE.getId(type) + "\" requires parameters!"))
-						.map(type -> Pair.of(type, input));
+					ParticleType<?> particleType = data.get("type");
+					NbtCompound paramsNbt = data.get("params");
+
+					Identifier particleTypeId = Objects.requireNonNull(Registries.PARTICLE_TYPE.getId(particleType), "Particle type (" + particleType + ") is not registered?");
+					paramsNbt.putString("type", particleTypeId.toString());
+
+					if (particleType instanceof SimpleParticleType simpleParticleType) {
+						return DataResult.success(simpleParticleType);
+					}
+
+					else if (paramsNbt.getSize() <= 1) {
+						return DataResult.error(() -> "Particle effect \"" + particleTypeId + "\" requires parameters!");
+					}
+
+					else if (ops instanceof RegistryOps<T> registryOps) {
+						return ParticleTypes.TYPE_CODEC.parse(registryOps.withDelegate(NbtOps.INSTANCE), paramsNbt);
+					}
+
+					else {
+						return DataResult.error(() -> "Can't decode parameterized particle effects without registry ops!");
+					}
+
+				});
+			}
+
+			@Override
+			public <T> RecordBuilder<T> encode(ParticleEffect input, DynamicOps<T> ops, RecordBuilder<T> prefix) {
+
+				ParticleType<?> particleType = input.getType();
+				Identifier particleTypeId = Objects.requireNonNull(Registries.PARTICLE_TYPE.getId(particleType), "Particle type (" + particleType + ") is not registered?");
+
+				prefix.add("type", IDENTIFIER.write(ops, particleTypeId));
+
+				if (particleType instanceof SimpleParticleType simpleParticleType) {
+					return prefix;
+				}
+
+				else if (ops instanceof RegistryOps<T> registryOps) {
+
+					RegistryOps<NbtElement> nbtOps = registryOps.withDelegate(NbtOps.INSTANCE);
+
+					return prefix.add("params", ParticleTypes.TYPE_CODEC.encodeStart(nbtOps, input)
+						.flatMap(nbtElement -> nbtElement instanceof NbtCompound nbtCompound ? DataResult.success(nbtCompound) : DataResult.error(() -> "Not a compound tag: " + nbtElement))
+						.ifSuccess(nbtCompound -> nbtCompound.remove("type"))
+						.map(nbtCompound -> nbtOps.convertTo(ops, nbtCompound)));
+
 				}
 
 				else {
-					return PARTICLE_EFFECT.setRoot(dataType.isRoot()).codec().decode(ops, input);
+					return prefix.withErrorsFrom(DataResult.error(() -> "Can't encode parameterized particle effects without registry ops!"));
 				}
 
 			}
 
 			@Override
-			public <T> DataResult<T> encode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
-				return PARTICLE_EFFECT.setRoot(dataType.isRoot()).codec().encode(input, ops, prefix);
+			public <T> Stream<T> keys(DynamicOps<T> ops) {
+				return serializableData.keys(ops);
 			}
 
 		},
-		PARTICLE_EFFECT.packetCodec()
-	));
+		serializableData -> ParticleTypes.PACKET_CODEC.cast()
+	);
+
+    public static final SerializableDataType<ParticleEffect> PARTICLE_EFFECT_OR_TYPE = SerializableDataType.recursive(self -> {
+		SerializableDataType<ParticleEffect> dataType = PARTICLE_EFFECT.setRoot(self.isRoot());
+		return SerializableDataType.of(
+			new Codec<>() {
+
+				@Override
+				public <T> DataResult<Pair<ParticleEffect, T>> decode(DynamicOps<T> ops, T input) {
+
+					if (ops.getStringValue(input).isSuccess()) {
+						return PARTICLE_TYPE.codec().parse(ops, input)
+							.flatMap(type -> type instanceof SimpleParticleType simpleType
+								? DataResult.success(simpleType)
+								: DataResult.error(() -> "Particle effect \"" + Registries.PARTICLE_TYPE.getId(type) + "\" requires parameters!"))
+							.map(type -> Pair.of(type, input));
+					}
+
+					else {
+						return dataType.codec().decode(ops, input);
+					}
+
+				}
+
+				@Override
+				public <T> DataResult<T> encode(ParticleEffect input, DynamicOps<T> ops, T prefix) {
+					return dataType.codec().encode(input, ops, prefix);
+				}
+
+			},
+			dataType.packetCodec()
+		);
+	});
 
     public static final SerializableDataType<ComponentChanges> COMPONENT_CHANGES = SerializableDataType.of(ComponentChanges.CODEC, ComponentChanges.PACKET_CODEC);
 
-    public static final CompoundSerializableDataType<ItemStack> UNCOUNTED_ITEM_STACK = SerializableDataType.compound(
-        new SerializableData()
-            .add("id", ITEM_ENTRY)
-            .add("components", COMPONENT_CHANGES, ComponentChanges.EMPTY),
-        data -> new ItemStack(
-            data.get("id"), 1,
-            data.get("components")
-        ),
-        (stack, serializableData) -> serializableData.instance()
-            .set("id", stack.getRegistryEntry())
-            .set("components", stack.getComponentChanges())
-    );
+	public static final DataObjectFactory<ItemStack> UNCOUNTED_ITEM_STACK_OBJ_FACTORY = new SimpleDataObjectFactory<>(
+		new SerializableData()
+			.add("id", ITEM_ENTRY)
+			.add("components", COMPONENT_CHANGES, ComponentChanges.EMPTY),
+		data -> new ItemStack(
+			data.get("id"), 1,
+			data.get("components")
+		),
+		(stack, serializableData) -> serializableData.instance()
+			.set("id", stack.getRegistryEntry())
+			.set("components", stack.getComponentChanges())
+	);
 
-    public static final CompoundSerializableDataType<ItemStack> ITEM_STACK = SerializableDataType.compound(
-        UNCOUNTED_ITEM_STACK.serializableData().copy()
-            .add("count", SerializableDataType.boundNumber(INT, 1, 99), 1),
-        (ops, data) -> {
+	public static final CompoundSerializableDataType<ItemStack> UNCOUNTED_ITEM_STACK = SerializableDataType.compound(UNCOUNTED_ITEM_STACK_OBJ_FACTORY);
 
-            ItemStack stack = UNCOUNTED_ITEM_STACK.fromData(ops, data);
-            stack.setCount(data.getInt("count"));
+	public static final DataObjectFactory<ItemStack> ITEM_STACK_OBJ_FACTORY = new SimpleDataObjectFactory<>(
+		UNCOUNTED_ITEM_STACK_OBJ_FACTORY.getSerializableData().copy()
+			.add("count", SerializableDataType.boundNumber(INT, 1, 99), 1),
+		data -> {
 
-            return stack;
+			ItemStack stack = UNCOUNTED_ITEM_STACK_OBJ_FACTORY.fromData(data);
+			stack.setCount(data.getInt("count"));
 
-        },
-        (stack, ops, serializableData) -> UNCOUNTED_ITEM_STACK
-			.toData(stack, ops, serializableData)
-            .set("count", ((ItemStackAccessor) (Object) stack).getCountOverride())
-    );
+			return stack;
+
+		},
+		(stack, serializableData) -> UNCOUNTED_ITEM_STACK_OBJ_FACTORY
+			.toData(stack, serializableData)
+			.set("count", ((ItemStackAccessor) (Object) stack).getCountOverride())
+	);
+
+    public static final CompoundSerializableDataType<ItemStack> ITEM_STACK = SerializableDataType.compound(ITEM_STACK_OBJ_FACTORY);
 
     public static final SerializableDataType<List<ItemStack>> ITEM_STACKS = ITEM_STACK.list();
 
@@ -657,7 +757,17 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<Text>> TEXTS = TEXT.list();
 
-    public static final SerializableDataType<RecipeEntry<? extends Recipe<?>>> RECIPE = SerializableDataType.lazy(() -> SerializableDataType.of(CalioCodecs.RECIPE_ENTRY, CalioPacketCodecs.RECIPE_ENTRY));
+    public static final SerializableDataType<RecipeEntry<? extends Recipe<?>>> RECIPE = SerializableDataType.of(
+		RecordCodecBuilder.create(instance -> instance.group(
+			IDENTIFIER.codec().fieldOf("id").forGetter(RecipeEntry::id),
+			CalioMapCodecs.RECIPE.forGetter(RecipeEntry::value)
+		).apply(instance, RecipeEntry::new)),
+		PacketCodec.tuple(
+			Identifier.PACKET_CODEC, RecipeEntry::id,
+			Recipe.PACKET_CODEC, RecipeEntry::value,
+			RecipeEntry::new
+		)
+	);
 
     public static final SerializableDataType<GameEvent> GAME_EVENT = SerializableDataType.registry(Registries.GAME_EVENT);
 

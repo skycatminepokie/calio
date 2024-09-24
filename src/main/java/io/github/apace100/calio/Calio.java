@@ -1,8 +1,6 @@
 package io.github.apace100.calio;
 
 import com.mojang.serialization.DataResult;
-import io.github.apace100.calio.codec.CalioCodecs;
-import io.github.apace100.calio.data.SerializableDataTypes;
 import io.github.apace100.calio.network.packet.s2c.SyncDataObjectRegistryS2CPacket;
 import io.github.apace100.calio.registry.DataObjectRegistry;
 import io.github.apace100.calio.util.CalioResourceConditions;
@@ -34,9 +32,6 @@ public class Calio implements ModInitializer {
 
 	@Override
 	public void onInitialize() {
-
-		CalioCodecs.init();
-		SerializableDataTypes.init();
 
         Criteria.register(CodeTriggerCriterion.ID.toString(), CodeTriggerCriterion.INSTANCE);
 		CalioResourceConditions.register();

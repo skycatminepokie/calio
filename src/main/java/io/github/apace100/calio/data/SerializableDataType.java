@@ -11,6 +11,7 @@ import com.mojang.serialization.codecs.UnboundedMapCodec;
 import io.github.apace100.calio.CalioServer;
 import io.github.apace100.calio.codec.*;
 import io.github.apace100.calio.mixin.WeightedListAccessor;
+import io.github.apace100.calio.registry.DataObjectFactory;
 import io.github.apace100.calio.util.*;
 import it.unimi.dsi.fastutil.objects.Object2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
@@ -27,10 +28,8 @@ import net.minecraft.registry.tag.TagEntry;
 import net.minecraft.registry.tag.TagKey;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.collection.WeightedList;
-import net.minecraft.util.dynamic.NullOps;
 import net.minecraft.util.function.ValueLists;
 import org.apache.commons.lang3.EnumUtils;
-import org.apache.commons.lang3.function.TriFunction;
 import org.jetbrains.annotations.ApiStatus;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -331,7 +330,7 @@ public class SerializableDataType<T> {
     }
 
     public static <T> SerializableDataType<T> registry(Registry<T> registry, String defaultNamespace, @Nullable IdentifierAlias aliases, BiFunction<Registry<T>, Identifier, String> exception) {
-        return lazy(() -> new SerializableDataType<>(
+        return of(
             new Codec<>() {
 
                 @Override
@@ -352,7 +351,7 @@ public class SerializableDataType<T> {
 
             },
             PacketCodecs.registryValue(registry.getKey())
-        ));
+        );
     }
 
     /**
@@ -360,9 +359,9 @@ public class SerializableDataType<T> {
      *  <p>Use any of the following instead:</p>
      *
      *  <ul>
-     *      <li>{@link #compound(SerializableData, Function, BiFunction) compound(SerializableData, Function&lt;SerializableData.Instance, T&gt, BiFunction&lt;T, SerializableData, SerializableData.Instance&gt;)} for normal processing.</li>
-     *      <li>{@link #compound(SerializableData, Function, BiFunction) compound(SerializableData, BiFunction&lt;DynamicOps&lt;?&gt;, SerializableData.Instance, T&gt;, TriFunction&lt;T, DynamicOps&lt;?&gt;, SerializableData, SerializableData.Instance&gt;)} for processing with an unknown {@link DynamicOps}.</li>
-     *      <li>{@link CompoundSerializableDataType#CompoundSerializableDataType(SerializableData, Function, BiFunction) CompoundSerializableDataType(SerializableData, Function&lt;SerializableData, CompoundCodec&lt;T&gt;&gt;, BiFunction&lt;SerializableData, CompoundCodec&lt;T&gt;, PacketCodec&lt;RegistryByteBuf, T&gt;&gt;)} for more granular control on how the element will be decoded/encoded.</li>
+     *      <li>{@link #compound(DataObjectFactory) compound(DataObjectFactory&lt;T&gt;)} for processing with a {@link DataObjectFactory}.</li>
+     *      <li>{@link #compound(SerializableData, Function, BiFunction) compound(SerializableData, Function&lt;SerializableData.Instance, T&gt, BiFunction&lt;T, SerializableData, SerializableData.Instance&gt;)} for simple processing.</li>
+     *      <li>{@link CompoundSerializableDataType#CompoundSerializableDataType(SerializableData, Function, Function) CompoundSerializableDataType(SerializableData, Function&lt;SerializableData, MapCodec&lt;T&gt;&gt;, Function&lt;SerializableData, PacketCodec&lt;RegistryByteBuf, T&gt;&gt;)} for more granular control on how the element will be decoded/encoded.</li>
      *  </ul>
      *
      */
@@ -371,36 +370,21 @@ public class SerializableDataType<T> {
         return compound(serializableData, fromData, (t, _serializableData) -> toData.apply(_serializableData, t));
     }
 
-    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiFunction<T, SerializableData, SerializableData.Instance> toData) {
-        return compound(serializableData, (ops, data) -> fromData.apply(data), (t, ops, _serializableData) -> toData.apply(t, _serializableData));
+    public static <T> CompoundSerializableDataType<T> compound(DataObjectFactory<T> factory) {
+        return compound(factory.getSerializableData(), factory::fromData, factory::toData);
     }
 
-    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, BiFunction<DynamicOps<?>, SerializableData.Instance, T> fromData, TriFunction<T, DynamicOps<?>, SerializableData, SerializableData.Instance> toData) {
+    public static <T> CompoundSerializableDataType<T> compound(SerializableData serializableData, Function<SerializableData.Instance, T> fromData, BiFunction<T, SerializableData, SerializableData.Instance> toData) {
         return new CompoundSerializableDataType<>(
             serializableData,
-            _serializableData -> new CompoundMapCodec<>() {
+            _serializableData -> new MapCodec<>() {
 
-				@Override
-				public <I> T fromData(DynamicOps<I> ops, SerializableData.Instance data) {
-					return fromData.apply(ops, data);
-				}
-
-				@Override
-				public <I> SerializableData.Instance toData(T input, DynamicOps<I> ops, SerializableData serializableData) {
-					return toData.apply(input, ops, serializableData);
-				}
-
-				@Override
-				public <I> Stream<I> keys(DynamicOps<I> ops) {
-					return _serializableData.keys(ops);
-				}
-
-				@Override
-				public <I> DataResult<T> decode(DynamicOps<I> ops, MapLike<I> input) {
-					return _serializableData.decode(ops, input).flatMap(data -> {
+                @Override
+                public <I> DataResult<T> decode(DynamicOps<I> ops, MapLike<I> input) {
+                    return _serializableData.decode(ops, input).flatMap(data -> {
 
                         try {
-                            return DataResult.success(this.fromData(ops, data));
+                            return DataResult.success(fromData.apply(data));
                         }
 
                         catch (Exception e) {
@@ -416,14 +400,13 @@ public class SerializableDataType<T> {
                         }
 
                     });
-				}
+                }
 
-				@Override
-				public <I> RecordBuilder<I> encode(T input, DynamicOps<I> ops, RecordBuilder<I> prefix) {
+                @Override
+                public <I> RecordBuilder<I> encode(T input, DynamicOps<I> ops, RecordBuilder<I> prefix) {
 
-                    SerializableData.Instance data;
                     try {
-                        data = this.toData(input, ops, _serializableData);
+                        return _serializableData.encode(toData.apply(input, _serializableData), ops, prefix);
                     }
 
                     catch (Exception e) {
@@ -438,26 +421,29 @@ public class SerializableDataType<T> {
 
                     }
 
-					return _serializableData.encode(data, ops, prefix);
+                }
 
-				}
+                @Override
+                public <I> Stream<I> keys(DynamicOps<I> ops) {
+                    return _serializableData.keys(ops);
+                }
 
-			},
-            (_serializableData, compoundMapCodec) -> new PacketCodec<>() {
+            },
+            _serializableData -> new PacketCodec<>() {
 
-				@Override
-				public T decode(RegistryByteBuf buf) {
-					SerializableData.Instance data = _serializableData.receive(buf);
-                    return compoundMapCodec.fromData(buf.getRegistryManager().getOps(NullOps.INSTANCE), data);
-				}
+                @Override
+                public T decode(RegistryByteBuf buf) {
+                    SerializableData.Instance data = _serializableData.receive(buf);
+                    return fromData.apply(data);
+                }
 
-				@Override
-				public void encode(RegistryByteBuf buf, T value) {
-                    SerializableData.Instance data = compoundMapCodec.toData(value, buf.getRegistryManager().getOps(NullOps.INSTANCE), _serializableData);
+                @Override
+                public void encode(RegistryByteBuf buf, T value) {
+                    SerializableData.Instance data = toData.apply(value, _serializableData);
                     _serializableData.send(buf, data);
-				}
+                }
 
-			}
+            }
         );
     }
 
@@ -507,7 +493,7 @@ public class SerializableDataType<T> {
         return mapped(biMap);
     }
 
-    public static <V> SerializableDataType<V> mapped(BiMap<String, V> biMap) {
+    public static <V> SerializableDataType<V> mapped(@NotNull BiMap<String, V> biMap) {
         return mapped(Suppliers.memoize(() -> biMap));
     }
 

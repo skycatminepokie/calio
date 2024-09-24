@@ -1,30 +1,28 @@
 package io.github.apace100.calio.data;
 
 import com.mojang.serialization.*;
-import io.github.apace100.calio.codec.CompoundMapCodec;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 
 import java.util.Optional;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 
 public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
     private final SerializableData serializableData;
 
-    private final Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter;
-    private final BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter;
+    private final Function<SerializableData, MapCodec<T>> mapCodecGetter;
+    private final Function<SerializableData, PacketCodec<RegistryByteBuf, T>> packetCodecGetter;
 
-    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter, Optional<String> name, boolean root) {
+    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, MapCodec<T>> mapCodecGetter, Function<SerializableData, PacketCodec<RegistryByteBuf, T>> packetCodecGetter, Optional<String> name, boolean root) {
         super(null, null, name, root);
         this.serializableData = serializableData;
-        this.compoundCodecGetter = compoundCodecGetter;
+        this.mapCodecGetter = mapCodecGetter;
         this.packetCodecGetter = packetCodecGetter;
     }
 
-    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, CompoundMapCodec<T>> compoundCodecGetter, BiFunction<SerializableData, CompoundMapCodec<T>, PacketCodec<RegistryByteBuf, T>> packetCodecGetter) {
-        this(serializableData, compoundCodecGetter, packetCodecGetter, Optional.empty(), true);
+    public CompoundSerializableDataType(SerializableData serializableData, Function<SerializableData, MapCodec<T>> mapCodecGetter, Function<SerializableData, PacketCodec<RegistryByteBuf, T>> packetCodecGetter) {
+        this(serializableData, mapCodecGetter, packetCodecGetter, Optional.empty(), true);
     }
 
     @Override
@@ -34,18 +32,18 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
     @Override
     public PacketCodec<RegistryByteBuf, T> packetCodec() {
-        return packetCodecGetter.apply(serializableData(), mapCodec());
+        return packetCodecGetter.apply(serializableData());
     }
 
     @Override
     public <S> CompoundSerializableDataType<S> xmap(Function<? super T, ? extends S> to, Function<? super S, ? extends T> from) {
         return new CompoundSerializableDataType<>(
             serializableData(),
-            serializableData1 -> compoundCodecGetter
-                .apply(serializableData)
+            _serializableData -> mapCodecGetter
+                .apply(_serializableData)
                 .xmap(to, from),
-            (serializableData1, compoundMapCodec) -> packetCodecGetter
-                .apply(serializableData1, compoundMapCodec.xmap(from, to))
+            _serializableData -> packetCodecGetter
+                .apply(_serializableData)
                 .xmap(to, from),
             this.getName(),
             this.isRoot()
@@ -60,11 +58,11 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
         return new CompoundSerializableDataType<>(
             serializableData(),
-            serializableData1 -> compoundCodecGetter
-                .apply(serializableData1)
+            _serializableData -> mapCodecGetter
+                .apply(_serializableData)
                 .flatXmap(to, fromWrapped),
-            (serializableData1, compoundMapCodec) -> packetCodecGetter
-                .apply(serializableData1, compoundMapCodec.flatXmap(fromWrapped, to))
+            _serializableData -> packetCodecGetter
+                .apply(_serializableData)
                 .xmap(toUnwrapped, from),
             this.getName(),
             this.isRoot()
@@ -80,11 +78,11 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
         return new CompoundSerializableDataType<>(
             serializableData(),
-            serializableData1 -> compoundCodecGetter
-                .apply(serializableData1)
+            _serializableData -> mapCodecGetter
+                .apply(_serializableData)
                 .flatXmap(toWrapped, from),
-            (serializableData1, compoundMapCodec) -> packetCodecGetter
-                .apply(serializableData1, compoundMapCodec.flatXmap(from, toWrapped))
+            _serializableData -> packetCodecGetter
+                .apply(_serializableData)
                 .xmap(to, fromUnwrapped),
             this.getName(),
             this.isRoot()
@@ -100,11 +98,11 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
         return new CompoundSerializableDataType<>(
             serializableData(),
-            serializableData1 -> compoundCodecGetter
-                .apply(serializableData1)
+            _serializableData -> mapCodecGetter
+                .apply(_serializableData)
                 .flatXmap(to, from),
-            (serializableData1, compoundMapCodec) -> packetCodecGetter
-                .apply(serializableData1, compoundMapCodec.flatXmap(from, to))
+            _serializableData -> packetCodecGetter
+                .apply(_serializableData)
                 .xmap(toUnwrapped, fromUnwrapped),
             this.getName(),
             this.isRoot()
@@ -114,27 +112,15 @@ public class CompoundSerializableDataType<T> extends SerializableDataType<T> {
 
     @Override
     public CompoundSerializableDataType<T> setRoot(boolean root) {
-        return new CompoundSerializableDataType<>(serializableData().setRoot(root), this.compoundCodecGetter, this.packetCodecGetter, this.getName(), root);
+        return new CompoundSerializableDataType<>(serializableData().setRoot(root), this.mapCodecGetter, this.packetCodecGetter, this.getName(), root);
     }
 
     public SerializableData serializableData() {
         return serializableData;
     }
 
-    public CompoundMapCodec<T> mapCodec() {
-        return compoundCodecGetter.apply(serializableData());
-    }
-
-    public T fromData(DynamicOps<?> ops, SerializableData.Instance data) {
-        return mapCodec().fromData(ops, data);
-    }
-
-    public SerializableData.Instance toData(T value, DynamicOps<?> ops) {
-        return toData(value, ops, serializableData());
-    }
-
-    public SerializableData.Instance toData(T value, DynamicOps<?> ops, SerializableData serializableData) {
-        return mapCodec().toData(value, ops, serializableData);
+    public MapCodec<T> mapCodec() {
+        return mapCodecGetter.apply(serializableData());
     }
 
 }
