@@ -6,8 +6,6 @@ import com.google.gson.internal.LazilyParsedNumber;
 import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.*;
 import com.mojang.serialization.codecs.PrimitiveCodec;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
-import io.github.apace100.calio.codec.CalioMapCodecs;
 import io.github.apace100.calio.codec.CalioPacketCodecs;
 import io.github.apace100.calio.mixin.IngredientAccessor;
 import io.github.apace100.calio.mixin.ItemStackAccessor;
@@ -51,6 +49,7 @@ import net.minecraft.particle.SimpleParticleType;
 import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.Recipe;
 import net.minecraft.recipe.RecipeEntry;
+import net.minecraft.recipe.RecipeSerializer;
 import net.minecraft.registry.*;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.sound.SoundEvent;
@@ -70,6 +69,7 @@ import net.minecraft.world.event.GameEvent;
 import net.minecraft.world.explosion.Explosion;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 @SuppressWarnings("unused")
@@ -757,12 +757,75 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<List<Text>> TEXTS = TEXT.list();
 
-    public static final SerializableDataType<RecipeEntry<? extends Recipe<?>>> RECIPE = SerializableDataType.of(
-		RecordCodecBuilder.create(instance -> instance.group(
-			IDENTIFIER.codec().fieldOf("id").forGetter(RecipeEntry::id),
-			CalioMapCodecs.RECIPE.forGetter(RecipeEntry::value)
-		).apply(instance, RecipeEntry::new)),
-		PacketCodec.tuple(
+	public static final SerializableDataType<RecipeSerializer<?>> RECIPE_SERIALIZER = SerializableDataType.registry(Registries.RECIPE_SERIALIZER, Identifier.DEFAULT_NAMESPACE, null, (recipeSerializers, id) -> "Recipe serializer \"" + id + "\" is not registered!");
+
+	public static final CompoundSerializableDataType<Recipe<?>> RECIPE = new CompoundSerializableDataType<>(
+		new SerializableData()
+			.add("type", RECIPE_SERIALIZER),
+		serializableData -> new MapCodec<>() {
+
+			@Override
+			public <T> Stream<T> keys(DynamicOps<T> ops) {
+				return serializableData.keys(ops);
+			}
+
+			@Override
+			public <T> DataResult<Recipe<?>> decode(DynamicOps<T> ops, MapLike<T> input) {
+				return serializableData.decode(ops, input)
+					.map(data -> (RecipeSerializer<?>) data.get("type"))
+					.flatMap(recipeSerializer -> recipeSerializer.codec().decode(ops, input)
+						.map(Function.identity()));
+			}
+
+			@SuppressWarnings("unchecked")
+			@Override
+			public <T> RecordBuilder<T> encode(Recipe<?> input, DynamicOps<T> ops, RecordBuilder<T> prefix) {
+
+				RecipeSerializer<Recipe<?>> recipeSerializer = (RecipeSerializer<Recipe<?>>) input.getSerializer();
+
+				prefix.add("type", RECIPE_SERIALIZER.write(ops, recipeSerializer));
+				recipeSerializer.codec().encode(input, ops, prefix);
+
+				return prefix;
+
+			}
+
+		},
+		serializableData -> Recipe.PACKET_CODEC
+	);
+
+    public static final CompoundSerializableDataType<RecipeEntry<?>> RECIPE_ENTRY = new CompoundSerializableDataType<>(
+		RECIPE.serializableData().copy()
+			.add("id", IDENTIFIER),
+		serializableData -> {
+			CompoundSerializableDataType<Recipe<?>> recipeDataType = RECIPE.setRoot(serializableData.isRoot());
+			return new MapCodec<>() {
+
+				@Override
+				public <T> Stream<T> keys(DynamicOps<T> ops) {
+					return serializableData.keys(ops);
+				}
+
+				@Override
+				public <T> DataResult<RecipeEntry<?>> decode(DynamicOps<T> ops, MapLike<T> input) {
+					return serializableData.decode(ops, input)
+						.flatMap(data -> recipeDataType.mapCodec().decode(ops, input)
+							.map(recipe -> new RecipeEntry<>(data.get("id"), recipe)));
+				}
+
+				@Override
+				public <T> RecordBuilder<T> encode(RecipeEntry<?> input, DynamicOps<T> ops, RecordBuilder<T> prefix) {
+
+					prefix.add("id", IDENTIFIER.write(ops, input.id()));
+					recipeDataType.mapCodec().encode(input.value(), ops, prefix);
+
+					return prefix;
+
+				}
+
+			};
+		},
+		serializableData -> PacketCodec.tuple(
 			Identifier.PACKET_CODEC, RecipeEntry::id,
 			Recipe.PACKET_CODEC, RecipeEntry::value,
 			RecipeEntry::new
@@ -794,6 +857,7 @@ public final class SerializableDataTypes {
 
     public static final SerializableDataType<UseAction> USE_ACTION = SerializableDataType.enumValue(UseAction.class);
 
+	@Deprecated(forRemoval = true)
     public static final CompoundSerializableDataType<StatusEffectChance> STATUS_EFFECT_CHANCE = SerializableDataType.compound(
         new SerializableData()
             .add("effect", STATUS_EFFECT_INSTANCE)
@@ -807,6 +871,7 @@ public final class SerializableDataTypes {
             .set("chance", effectChance.chance())
     );
 
+	@Deprecated(forRemoval = true)
     public static final SerializableDataType<List<StatusEffectChance>> STATUS_EFFECT_CHANCES = STATUS_EFFECT_CHANCE.list();
 
     public static final SerializableDataType<FoodComponent.StatusEffectEntry> FOOD_STATUS_EFFECT_ENTRY = SerializableDataType.of(FoodComponent.StatusEffectEntry.CODEC, FoodComponent.StatusEffectEntry.PACKET_CODEC);
@@ -819,7 +884,7 @@ public final class SerializableDataTypes {
             .add("saturation", FLOAT)
             .add("can_always_eat", BOOLEAN, false)
             .add("eat_seconds", NON_NEGATIVE_FLOAT, 1.6F)
-            .addSupplied("using_converts_to", SerializableDataType.optional(UNCOUNTED_ITEM_STACK, false), Optional::empty)
+            .addSupplied("using_converts_to", UNCOUNTED_ITEM_STACK.optional(), Optional::empty)
             .add("effect", FOOD_STATUS_EFFECT_ENTRY, null)
             .add("effects", FOOD_STATUS_EFFECT_ENTRIES, null),
         data -> {
